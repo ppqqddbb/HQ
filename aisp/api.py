@@ -437,6 +437,74 @@ def api_config() -> Dict[str, Any]:
     return pack({"settings": settings.as_dict(), "defaults": DEFAULT_PARAMS})
 
 
+class BackupRequest(BaseModel):
+    include_clean: bool = False
+    dataset_versions: Optional[List[str]] = None
+
+
+@app.post("/api/v1/admin/backup")
+def api_backup(req: BackupRequest) -> Dict[str, Any]:
+    """生成备份包（默认仅元数据库；include_clean=True 时含 CLEAN Parquet）。"""
+    from . import backup as backup_mod
+
+    try:
+        m = backup_mod.create_backup(include_clean=req.include_clean,
+                                    dataset_versions=req.dataset_versions)
+    except Exception as exc:  # 磁盘满、文件锁等
+        raise HTTPException(500, f"备份失败：{exc}")
+    store.audit("backup_create", "backup", f"zip={m['zip_path']} clean={req.include_clean}")
+    return pack(m)
+
+
+@app.get("/api/v1/admin/backups")
+def api_backups() -> Dict[str, Any]:
+    from . import backup as backup_mod
+
+    return pack(backup_mod.list_backups())
+
+
+@app.get("/api/v1/admin/backups/{name}")
+def api_backup_download(name: str) -> FileResponse:
+    """下载备份包；文件名严格校验，禁止路径穿越。"""
+    from . import backup as backup_mod
+
+    if "/" in name or "\\" in name or not name.startswith("aisp_backup_"):
+        raise HTTPException(400, "非法的备份文件名")
+    p = (settings.artifacts_dir / "backups" / name).resolve()
+    root = (settings.artifacts_dir / "backups").resolve()
+    if root not in p.parents or not p.is_file():
+        raise HTTPException(404, "备份包不存在")
+    return FileResponse(str(p), media_type="application/zip", filename=name)
+
+
+class RestoreRequest(BaseModel):
+    name: str
+    restore_clean: bool = False
+    overwrite: bool = False
+
+
+@app.post("/api/v1/admin/restore")
+def api_restore(req: RestoreRequest) -> Dict[str, Any]:
+    """从备份包恢复元数据库（可选恢复 CLEAN 明细）。"""
+    from . import backup as backup_mod
+
+    if "/" in req.name or "\\" in req.name or not req.name.startswith("aisp_backup_"):
+        raise HTTPException(400, "非法的备份文件名")
+    p = (settings.artifacts_dir / "backups" / req.name).resolve()
+    root = (settings.artifacts_dir / "backups").resolve()
+    if root not in p.parents or not p.is_file():
+        raise HTTPException(404, "备份包不存在")
+    try:
+        out = backup_mod.restore_backup(p, restore_clean=req.restore_clean,
+                                        overwrite=req.overwrite)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"恢复失败：{exc}")
+    store.audit("backup_restore", "backup", f"zip={req.name} clean={req.restore_clean}")
+    return pack(out)
+
+
 @app.get("/api/v1/health")
 def api_health() -> Dict[str, Any]:
     return pack({"status": "ok", "dataset": dataservice._latest_dataset()})

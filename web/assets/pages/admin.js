@@ -127,6 +127,107 @@ export async function render(view) {
   };
   refreshBtn.addEventListener("click", loadAudit);
   await loadAudit();
+
+  /* ---------------- 备份与恢复（技术方案 19.1 / 20.1） ---------------- */
+  await renderBackup(view);
+}
+
+async function renderBackup(view) {
+  const host = el("div", {});
+  view.appendChild(host);
+
+  const includeClean = el("input", { type: "checkbox" });
+  const mkBtn = el("button", { class: "btn primary sm" }, "生成备份");
+  const hint = el("div", { class: "note" },
+    "默认仅备份元数据库（批次 / 任务 / 结果索引 / 审计，体积通常 < 1 MB）；"
+    + "勾选「含清洗明细」会一并打包 CLEAN Parquet，体积约等于原始清洗结果。");
+  const listBox = el("div", {});
+
+  host.appendChild(card("备份与恢复", "元数据库 + 可选 CLEAN 明细，zip 归档可离线保存",
+    el("div", { class: "toolbar" },
+      el("div", { class: "field" }, el("label", {}, "含清洗明细"), includeClean),
+      mkBtn),
+    hint,
+    listBox));
+
+  const loadList = async () => {
+    listBox.innerHTML = "";
+    listBox.appendChild(loading("读取备份清单…"));
+    let rows = [];
+    try {
+      rows = await api("/admin/backups");
+    } catch (e) {
+      listBox.innerHTML = "";
+      listBox.appendChild(el("div", { class: "note", style: { color: "#fca5a5" } }, e.message));
+      return;
+    }
+    listBox.innerHTML = "";
+    if (!rows.length) { listBox.appendChild(empty("暂无备份包，点击「生成备份」创建")); return; }
+    listBox.appendChild(table([
+      { label: "生成时间", render: r => fmtStamp((r.manifest || {}).created_at) || r.created_at },
+      { label: "文件名", render: r => String(r.path).replace(/^.*[\\/]/, "") },
+      { label: "体积", num: true, render: r => FMT.bytes(r.bytes) },
+      {
+        label: "含明细", render: r => el("span", { class: "tag " + ((r.manifest || {}).include_clean ? "warn" : "") },
+          (r.manifest || {}).include_clean ? "是" : "否"),
+      },
+      {
+        label: "数据集", render: r => ((r.manifest || {}).datasets || [])
+          .map(d => d.dataset_version).join(", ") || "—",
+      },
+      {
+        label: "操作", render: r => el("span", {},
+          el("a", {
+            class: "btn sm", style: { marginRight: "6px", textDecoration: "none" },
+            href: `/api/v1/admin/backups/${encodeURIComponent(String(r.path).replace(/^.*[\\/]/, ""))}`,
+          }, "下载"),
+          el("button", {
+            class: "btn sm",
+            onclick: async (ev) => {
+              const name = String(r.path).replace(/^.*[\\/]/, "");
+              if (!confirm(`将用备份 ${name} 覆盖当前元数据库（原库会先另存为 pre_restore）\n继续？`)) return;
+              ev.target.disabled = true;
+              try {
+                await api("/admin/restore", {
+                  method: "POST",
+                  body: JSON.stringify({ name, restore_clean: false, overwrite: false }),
+                });
+                toast("元数据库已从备份恢复");
+                await loadList();
+              } catch (e) { toast(e.message, true); }
+              finally { ev.target.disabled = false; }
+            },
+          }, "恢复")),
+      },
+    ], rows, { tall: true }));
+  };
+
+  mkBtn.addEventListener("click", async () => {
+    mkBtn.disabled = true;
+    mkBtn.textContent = includeClean.checked ? "打包中…" : "生成中…";
+    try {
+      const m = await api("/admin/backup", {
+        method: "POST",
+        body: JSON.stringify({ include_clean: includeClean.checked }),
+      });
+      toast(`备份完成：${FMT.bytes(m.zip_bytes)} · ${(m.files || []).length} 个文件`);
+      await loadList();
+    } catch (e) { toast(e.message, true); }
+    finally {
+      mkBtn.disabled = false;
+      mkBtn.textContent = "生成备份";
+    }
+  });
+
+  await loadList();
+}
+
+function fmtStamp(v) {
+  // 备份目录名用的是 20261111_214942 这种紧凑时间戳，表格里展示成可读时间
+  const s = String(v || "");
+  if (!/^\d{8}_\d{6}$/.test(s)) return s;
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)} `
+    + `${s.slice(9, 11)}:${s.slice(11, 13)}:${s.slice(13, 15)}`;
 }
 
 function shortPath(p) {

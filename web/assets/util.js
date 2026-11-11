@@ -37,6 +37,15 @@ const FMT = {
     if (Math.abs(n) >= 1000) return (n / 1000).toFixed(2) + " km";
     return n.toFixed(0) + " m";
   },
+  bytes(v) {
+    if (v === null || v === undefined) return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "—";
+    if (Math.abs(n) >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + " GB";
+    if (Math.abs(n) >= 1024 ** 2) return (n / 1024 ** 2).toFixed(2) + " MB";
+    if (Math.abs(n) >= 1024) return (n / 1024).toFixed(0) + " KB";
+    return n.toFixed(0) + " B";
+  },
   ts(v) {
     if (!v) return "—";
     return String(v).replace("T", " ").slice(0, 19);

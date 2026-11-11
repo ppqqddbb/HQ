@@ -172,6 +172,17 @@ def _shared_db():
     return _DB_CONN
 
 
+def close_shared() -> None:
+    """释放进程内共享的元数据库实例（备份/恢复、rebuild 等需要换文件时调用）。"""
+    global _DB_CONN
+    with _LOCK:
+        if _DB_CONN is not None:
+            try:
+                _DB_CONN.close()
+            finally:
+                _DB_CONN = None
+
+
 def connect(read_only: bool = False) -> duckdb.DuckDBPyConnection:
     """派生一个元数据库连接（共享同一 Database 实例）并应用资源参数。
 

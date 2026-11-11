@@ -132,6 +132,7 @@ def cmd_rebuild(args: argparse.Namespace) -> None:
 
     if not args.yes:
         raise SystemExit("请加 --yes 确认清空 artifacts 下的元数据与清洗结果")
+    store.close_shared()
     for name in ("meta.duckdb", "clean", "staging", "results", "tasks", "tmp"):
         p = settings.artifacts_dir / name
         if p.is_dir():
@@ -141,6 +142,36 @@ def cmd_rebuild(args: argparse.Namespace) -> None:
     settings.ensure_dirs()
     store.init_meta()
     print("已重置，可重新执行 import / demo")
+
+
+def cmd_backup(args: argparse.Namespace) -> None:
+    """生成备份包（元数据库 + 可选 CLEAN 明细）。"""
+    from . import backup as backup_mod
+
+    store.init_meta()
+    t0 = time.time()
+    m = backup_mod.create_backup(include_clean=args.include_clean,
+                                dataset_versions=args.dataset or None)
+    store.audit("backup_create", "backup", f"zip={m['zip_path']}")
+    print(f"备份完成：{m['zip_path']}")
+    print(f"  文件数 {len(m['files'])}，体积 {m['zip_bytes'] / 1024 / 1024:.1f} MB，"
+          f"耗时 {time.time() - t0:.1f}s")
+    for d in m["datasets"]:
+        print(f"  数据集 {d['dataset_version']}：{d['n_files']} 个 parquet，"
+              f"{d['bytes'] / 1024 / 1024:.1f} MB"
+              + (f"，{d['n_points']:,} 点" if d.get("n_points") else ""))
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    """从备份包恢复（先校验 manifest，避免解错包）。"""
+    from pathlib import Path
+
+    from . import backup as backup_mod
+
+    out = backup_mod.restore_backup(Path(args.path), restore_clean=args.clean,
+                                    overwrite=args.overwrite)
+    print(json.dumps({k: v for k, v in out.items() if k != "manifest"},
+                     ensure_ascii=False, indent=2, default=str))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -178,6 +209,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rb = sub.add_parser("rebuild", help="清空元数据与清洗结果")
     p_rb.add_argument("--yes", action="store_true")
     p_rb.set_defaults(func=cmd_rebuild)
+
+    p_bk = sub.add_parser("backup", help="生成备份包（元数据库 + 可选 CLEAN 明细）")
+    p_bk.add_argument("--include-clean", action="store_true",
+                      help="同时打包 CLEAN Parquet（体积大）")
+    p_bk.add_argument("--dataset", nargs="*", default=None,
+                      help="仅备份指定数据集版本")
+    p_bk.set_defaults(func=cmd_backup)
+
+    p_rs = sub.add_parser("restore", help="从备份包恢复")
+    p_rs.add_argument("--path", required=True, help="备份 zip 路径")
+    p_rs.add_argument("--clean", action="store_true", help="一并恢复 CLEAN 明细")
+    p_rs.add_argument("--overwrite", action="store_true", help="覆盖已存在的数据集版本")
+    p_rs.set_defaults(func=cmd_restore)
 
     args = ap.parse_args(argv)
     args.func(args)
