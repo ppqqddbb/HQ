@@ -2,17 +2,126 @@
 const API = "/api/v1";
 
 async function api(path, opts = {}) {
-  const r = await fetch(API + path, {
-    headers: { "Content-Type": "application/json" },
-    ...opts,
-  });
+  // 鉴权开启时从 localStorage 读取令牌；关闭时后端直接按本机管理员处理
+  const token = (() => { try { return localStorage.getItem("aisp_token") || ""; } catch (e) { return ""; } })();
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    token ? { "X-AIS-Token": token } : {},
+    opts.headers || {});
+  const r = await fetch(API + path, { ...opts, headers });
   let body;
   try { body = await r.json(); } catch { body = { ok: false, error: { message: "响应解析失败" } }; }
   if (!r.ok || body.ok === false) {
     const msg = (body && body.error && (body.error.message || body.error.code)) || `HTTP ${r.status}`;
+    // 401/403 提示补充可操作建议，避免用户干瞪眼
+    if (r.status === 401) {
+      openAuthPanel(true);
+      throw new Error("未认证：请点击右上角「身份」输入访问令牌");
+    }
+    if (r.status === 403) throw new Error(`无权限：${msg}`);
     throw new Error(msg);
   }
   return body.data;
+}
+
+/* ---------------- 访问令牌（身份）----------------
+ * 后端 AISP_AUTH=off 时无需令牌；=on 时所有接口都要求令牌。
+ * 令牌仅保存在浏览器 localStorage，不写入代码或仓库。
+ */
+const TOKEN_KEY = "aisp_token";
+
+function getToken() {
+  try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+}
+
+function setToken(t) {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch (e) { /* 隐私模式下忽略 */ }
+  renderIdentityPill();
+}
+
+let _whoami = null;
+
+async function refreshWhoami() {
+  try {
+    _whoami = await api("/whoami");
+  } catch (e) {
+    _whoami = null;
+  }
+  renderIdentityPill();
+  return _whoami;
+}
+
+/** 右上角身份徽标：显示角色；点击可切换令牌 */
+function renderIdentityPill() {
+  const pill = document.getElementById("idPill");
+  if (!pill) return;
+  const me = _whoami;
+  if (!me) {
+    pill.textContent = "◌ 身份";
+    pill.className = "pill";
+    pill.title = "点击设置访问令牌";
+    return;
+  }
+  const ident = me.identity || {};
+  if (!me.auth_enabled) {
+    pill.textContent = `◉ ${ident.role_cn || "管理员"}`;
+    pill.className = "pill";
+    pill.title = "未启用鉴权：本机管理员模式";
+  } else if (ident.authenticated) {
+    pill.textContent = `◉ ${ident.role_cn || ident.role}`;
+    pill.className = "pill acc";
+    pill.title = `已认证 · ${ident.subject}`;
+  } else {
+    pill.textContent = "◌ 未登录";
+    pill.className = "pill warn";
+    pill.title = "鉴权已开启，需输入访问令牌";
+  }
+}
+
+let _authPanelOpen = false;
+
+/** 弹出令牌输入面板；auto 为 true 时表示由 401 触发 */
+function openAuthPanel(auto = false) {
+  if (_authPanelOpen) return;
+  const wrap = document.getElementById("authModal");
+  if (!wrap) return;
+  _authPanelOpen = true;
+  wrap.style.display = "flex";
+  const input = document.getElementById("authTokenInput");
+  const hint = document.getElementById("authHint");
+  const me = _whoami || {};
+  input.value = getToken();
+  hint.textContent = auto
+    ? "服务端已开启鉴权（AISP_AUTH=on），请粘贴管理员分配的令牌。"
+    : (me.auth_enabled
+      ? `当前角色：${((me.identity || {}).role_cn) || "—"}，可更换令牌。`
+      : "当前服务未启用鉴权，令牌可以留空。");
+  hint.style.color = auto ? "#f6d97a" : "var(--txt3)";
+  setTimeout(() => input.focus(), 30);
+}
+
+function closeAuthPanel() {
+  const wrap = document.getElementById("authModal");
+  if (wrap) wrap.style.display = "none";
+  _authPanelOpen = false;
+}
+
+async function submitAuthPanel() {
+  const input = document.getElementById("authTokenInput");
+  const err = document.getElementById("authErr");
+  err.textContent = "";
+  setToken(input.value.trim());
+  const me = await refreshWhoami();
+  if (me && me.auth_enabled && !(me.identity || {}).authenticated) {
+    err.textContent = "令牌无效，请确认与服务端 AISP_TOKENS 配置一致";
+    return;
+  }
+  closeAuthPanel();
+  toast(me && me.auth_enabled ? `已登录：${(me.identity || {}).role_cn}` : "令牌已应用", false);
+  if (typeof window.__aispAfterAuth === "function") window.__aispAfterAuth();
 }
 
 const FMT = {
@@ -76,6 +185,37 @@ function el(tag, attrs = {}, ...children) {
     e.appendChild(typeof c === "string" || typeof c === "number" ? document.createTextNode(String(c)) : c);
   }
   return e;
+}
+
+function authHeaders() {
+  // 鉴权开启时令牌放在请求头，附件下载不能用普通 <a href>（会丢头部）
+  try {
+    const t = localStorage.getItem("aisp_token");
+    return t ? { "X-AIS-Token": t } : {};
+  } catch (e) { return {}; }
+}
+
+/** 带鉴权下载文件：fetch → Blob → 临时 a 标签触发保存 */
+async function downloadFile(url, filename) {
+  const r = await fetch(url, { headers: authHeaders() });
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { const b = await r.json(); msg = (b.error && b.error.message) || msg; } catch (e) { }
+    if (r.status === 401) {
+      openAuthPanel(true);
+      throw new Error("未认证：请先在右上角「身份」输入访问令牌");
+    }
+    throw new Error(msg);
+  }
+  const blob = await r.blob();
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = href;
+  a.download = filename || "download.bin";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 5000);
 }
 
 function toast(msg, isErr = false) {
@@ -529,5 +669,10 @@ const MapLayers = {
 
 window.API = API; window.api = api; window.FMT = FMT; window.el = el;
 window.toast = toast; window.card = card; window.kpi = kpi; window.table = table;
+window.downloadFile = downloadFile;
+window.getToken = getToken; window.setToken = setToken;
+window.refreshWhoami = refreshWhoami; window.renderIdentityPill = renderIdentityPill;
+window.openAuthPanel = openAuthPanel; window.closeAuthPanel = closeAuthPanel;
+window.submitAuthPanel = submitAuthPanel;
 window.bars = bars; window.loading = loading; window.empty = empty; window.debounce = debounce;
 window.TileMap = TileMap; window.MapLayers = MapLayers;

@@ -63,11 +63,19 @@ async function loadDatasets() {
     const h = document.getElementById("healthPill");
     h.textContent = "● 服务正常";
     h.className = "pill ok";
+    // 首次成功请求时同步身份（鉴权开启时用于右上角角色徽标）
+    if (!window.__aispWhoamiLoaded) { window.__aispWhoamiLoaded = true; refreshWhoami(); }
   } catch (e) {
-    document.getElementById("healthPill").textContent = "● 服务异常";
-    document.getElementById("healthPill").className = "pill bad";
+    const needAuth = String(e.message || "").includes("未认证");
+    const hp = document.getElementById("healthPill");
+    hp.textContent = needAuth ? "◌ 未登录" : "● 服务异常";
+    hp.className = needAuth ? "pill warn" : "pill bad";
     sel.innerHTML = "";
-    sel.appendChild(el("option", { value: "" }, "（连接失败）"));
+    sel.appendChild(el("option", { value: "" }, needAuth ? "（未登录）" : "（连接失败）"));
+    if (needAuth && !window.__aispWhoamiLoaded) {
+      window.__aispWhoamiLoaded = true;
+      refreshWhoami();
+    }
   }
   renderMiniStats();
 }
@@ -126,6 +134,21 @@ function boot() {
     route();
     toast("已刷新");
   });
+  // 身份徽标与令牌弹窗（鉴权开启时使用）
+  document.getElementById("idPill").addEventListener("click", () => openAuthPanel(false));
+  document.getElementById("authCancel").addEventListener("click", closeAuthPanel);
+  document.getElementById("authSubmit").addEventListener("click", submitAuthPanel);
+  document.getElementById("authTokenInput").addEventListener("keydown", e => {
+    if (e.key === "Enter") submitAuthPanel();
+  });
+  document.getElementById("authModal").addEventListener("click", e => {
+    if (e.target.id === "authModal") closeAuthPanel();
+  });
+  // 登录成功后重新拉取数据并重渲染当前页
+  window.__aispAfterAuth = async () => {
+    await loadDatasets();
+    route();
+  };
   window.addEventListener("hashchange", route);
   window.addEventListener("resize", debounce(() => {
     // ECharts 由 ResizeObserver 处理，地图自行监听

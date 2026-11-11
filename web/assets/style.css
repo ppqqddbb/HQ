@@ -80,9 +80,10 @@ select:focus,input:focus,textarea:focus{border-color:var(--acc)}
 .g2{grid-template-columns:1fr 1fr}
 .g3{grid-template-columns:repeat(3,1fr)}
 .g4{grid-template-columns:repeat(4,1fr)}
+.g5{grid-template-columns:repeat(5,1fr)}
 .g23{grid-template-columns:2fr 1fr}
 .g32{grid-template-columns:1fr 2fr}
-@media(max-width:1360px){.g4{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr 1fr}
+@media(max-width:1360px){.g4,.g5{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:1fr 1fr}
   .g2,.g23,.g32{grid-template-columns:1fr}}
 
 .kpi{position:relative;overflow:hidden}
@@ -127,6 +128,16 @@ table.dt .num{text-align:right;font-variant-numeric:tabular-nums}
 .tag.warn{background:rgba(251,191,36,.14);color:#f6d97a;border-color:rgba(251,191,36,.3)}
 .tag.bad{background:rgba(248,113,113,.15);color:#fca5a5;border-color:rgba(248,113,113,.3)}
 .tag.vio{background:rgba(167,139,250,.15);color:#c4b5fd;border-color:rgba(167,139,250,.3)}
+
+/* ---------- 身份 / 令牌弹窗 ---------- */
+button.pill{font-family:inherit;cursor:pointer}
+.modal{position:fixed;inset:0;background:rgba(4,9,16,.72);backdrop-filter:blur(3px);
+  z-index:120;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal-box{width:min(430px,100%);background:linear-gradient(180deg,var(--panel),#0f1a2b);
+  border:1px solid var(--line2);border-radius:12px;padding:18px 20px;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+.modal-box h3{margin:0 0 10px;font-size:14px;font-weight:600}
+.modal-box .field input{width:100%;box-sizing:border-box;font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
 
 .toast{position:fixed;right:20px;bottom:20px;background:var(--panel2);border:1px solid var(--line2);
   border-radius:9px;padding:10px 15px;font-size:12.5px;box-shadow:var(--sh);opacity:0;

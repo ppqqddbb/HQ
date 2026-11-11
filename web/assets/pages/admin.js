@@ -11,10 +11,11 @@ export async function render(view) {
 
   top.appendChild(loading("正在读取系统元数据…"));
 
-  let meta = null, cfg = null;
+  let meta = null, cfg = null, me = null;
   try {
     meta = await api("/admin/meta");
     cfg = await api("/admin/config");
+    me = await api("/whoami");
   } catch (e) {
     top.innerHTML = "";
     top.appendChild(el("div", { class: "note", style: { color: "#fca5a5" } }, e.message));
@@ -24,8 +25,11 @@ export async function render(view) {
 
   /* ---------------- 概览 ---------------- */
   const s = cfg.settings || {};
-  top.appendChild(el("div", { class: "grid g4", style: { marginBottom: "14px" } },
+  const ident = (me || {}).identity || {};
+  top.appendChild(el("div", { class: "grid g5", style: { marginBottom: "14px" } },
     kpi("服务地址", `${s.host}:${s.port}`, "FastAPI + Uvicorn"),
+    kpi("当前角色", ident.role_cn || "—",
+      me && me.auth_enabled ? `已启用鉴权 · ${ident.subject}` : "未启用鉴权（本机管理员）"),
     kpi("DuckDB 内存上限", s.duckdb_memory_limit || "—", "可经 .env 覆盖"),
     kpi("数据目录", shortPath(s.data_dir), "原始 CSV 存放位置"),
     kpi("产物目录", shortPath(s.artifacts_dir), "清洗结果 / 分析产物 / 元数据库")));
@@ -177,9 +181,16 @@ async function renderBackup(view) {
       },
       {
         label: "操作", render: r => el("span", {},
-          el("a", {
-            class: "btn sm", style: { marginRight: "6px", textDecoration: "none" },
-            href: `/api/v1/admin/backups/${encodeURIComponent(String(r.path).replace(/^.*[\\/]/, ""))}`,
+          el("button", {
+            class: "btn sm", style: { marginRight: "6px" },
+            onclick: async (ev) => {
+              const name = String(r.path).replace(/^.*[\\/]/, "");
+              ev.target.disabled = true;
+              try {
+                await downloadFile(`/api/v1/admin/backups/${encodeURIComponent(name)}`, name);
+              } catch (e) { toast(`下载失败：${e.message}`, true); }
+              finally { ev.target.disabled = false; }
+            },
           }, "下载"),
           el("button", {
             class: "btn sm",

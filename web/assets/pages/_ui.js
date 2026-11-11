@@ -133,18 +133,45 @@ export function errorCard(title, err) {
 export function reportButtons(taskId, opts = {}) {
   if (!taskId) return el("span", {});
   const base = `/api/v1/tasks/${encodeURIComponent(taskId)}/report`;
+
+  /* 用 fetch + Blob 而不是直接给 <a href> / window.open：
+     开启鉴权后令牌在请求头里，直接跳转会丢掉 X-AIS-Token，得到一个 401 页面。 */
+  const authHeaders = () => {
+    try {
+      const t = localStorage.getItem("aisp_token");
+      return t ? { "X-AIS-Token": t } : {};
+    } catch (e) { return {}; }
+  };
+
   const open = el("button", {
     class: "btn sm",
     title: "在新窗口打开自包含报告，可直接打印或另存为 PDF",
-    onclick: () => window.open(`${base}?format=html`, "_blank", "noopener"),
+    onclick: async () => {
+      try {
+        const r = await fetch(`${base}?format=html`, { headers: authHeaders() });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const url = URL.createObjectURL(await r.blob());
+        window.open(url, "_blank", "noopener");
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } catch (e) { toast(`报告生成失败：${e.message}`, true); }
+    },
   }, "导出报告 (HTML)");
-  const md = el("a", {
+
+  const md = el("button", {
     class: "btn sm",
-    href: `${base}?format=md`,
-    download: `report_${taskId}.md`,
     title: "下载 Markdown 报告，便于归档到 Git 或知会文档",
-    style: { textDecoration: "none" },
+    onclick: async () => {
+      try {
+        const r = await fetch(`${base}?format=md`, { headers: authHeaders() });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const url = URL.createObjectURL(await r.blob());
+        const a = el("a", { href: url, download: `report_${taskId}.md` });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } catch (e) { toast(`报告下载失败：${e.message}`, true); }
+    },
   }, "Markdown");
+
   return el("div", { class: "toolbar", style: { marginBottom: "0", gap: "6px" } },
     opts.label ? el("span", { style: { fontSize: "11.5px", color: "var(--txt3)" } }, opts.label) : null,
     open, md);

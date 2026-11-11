@@ -26,6 +26,10 @@ from aisp.config import settings
 def env(tmp_path, monkeypatch):
     """临时 artifacts 目录 + 一个最小元数据库 + 一个 CLEAN 数据集。"""
     monkeypatch.setattr(settings, "artifacts_dir", tmp_path)
+    # 共享元数据库连接可能指向上一个用例的临时目录，切换 artifacts 前必须释放，
+    # 否则 EXPORT DATABASE 会导出一个空库，恢复后也就读不到数据。
+    from aisp import store
+    store.close_shared()
     tmp_path.mkdir(parents=True, exist_ok=True)
     settings.ensure_dirs()
 

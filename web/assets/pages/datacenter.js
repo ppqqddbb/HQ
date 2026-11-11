@@ -370,10 +370,14 @@ function downloadBox(dv, q) {
   wrap.appendChild(el("div", { class: "note" },
     "大文件按需下载，不进入接口 JSON 响应。Parquet 可直接用 DuckDB / pandas 读取。"));
   const tb = el("div", { class: "toolbar", style: { marginTop: "10px" } },
-    ...names.map(n => el("a", {
+    ...names.map(n => el("button", {
       class: "btn sm",
-      href: `/api/v1/datasets/${encodeURIComponent(dv)}/download/${encodeURIComponent(n)}`,
-      download: n,
+      onclick: async () => {
+        try {
+          await downloadFile(
+            `/api/v1/datasets/${encodeURIComponent(dv)}/download/${encodeURIComponent(n)}`, n);
+        } catch (e) { toast(`下载失败：${e.message}`, true); }
+      },
     }, n)));
   wrap.appendChild(tb);
   const bc = el("div", { class: "chart", style: { height: "180px", marginTop: "10px" } });

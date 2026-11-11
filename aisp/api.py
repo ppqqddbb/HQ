@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import dataservice, store, tasks
+from . import auth as auth_mod
 from .config import settings, default_params, DEFAULT_PARAMS
 from . import ingest as ingest_mod
 
@@ -67,6 +68,31 @@ async def http_error_handler(request: Request, exc: HTTPException):
     )
 
 
+@app.middleware("http")
+async def _auth_guard(request: Request, call_next):
+    """统一鉴权入口（技术方案 16.1）。
+
+    `AISP_AUTH=off`（默认）时只记录身份，不做拦截，保证单机开发不被打断；
+    开启后按 (方法, 路径) → 权限 → 角色 逐层判定，越权写审计并返回 401/403。
+    """
+    ident = auth_mod.identity_from_headers(dict(request.headers))
+    request.state.identity = ident
+
+    need = auth_mod.required_permission(request.method, request.url.path)
+    if need is None or ident.can(need):
+        return await call_next(request)
+
+    status = 401 if not ident.authenticated and auth_mod.auth_enabled() else 403
+    detail = ("未提供有效令牌" if status == 401
+              else f"角色 {ident.role_cn} 无权限 {need}")
+    try:
+        store.audit("auth_denied", request.url.path, f"need={need} role={ident.role}",
+                    user_id=ident.subject, result="failed",
+                    ip=request.client.host if request.client else "")
+    except Exception:
+        pass
+    return JSONResponse(status_code=status,
+                        content=pack(error={"code": status, "message": detail}))
 
 
 # --------------------------------------------------------------------------- 数据集
@@ -435,6 +461,19 @@ def api_audit(limit: int = 100) -> Dict[str, Any]:
 @app.get("/api/v1/admin/config")
 def api_config() -> Dict[str, Any]:
     return pack({"settings": settings.as_dict(), "defaults": DEFAULT_PARAMS})
+
+
+@app.get("/api/v1/whoami")
+def api_whoami(request: Request) -> Dict[str, Any]:
+    """当前请求的身份与权限集（前端据此隐藏无权操作的按钮）。"""
+    ident: auth_mod.Identity = getattr(request.state, "identity", None) or \
+        auth_mod.identity_from_headers(dict(request.headers))
+    return pack({
+        "identity": ident.to_dict(),
+        "auth_enabled": auth_mod.auth_enabled(),
+        "permissions": sorted(auth_mod.ROLE_PERMS.get(ident.role, set())),
+        "roles": {r: sorted(p) for r, p in auth_mod.ROLE_PERMS.items()},
+    })
 
 
 class BackupRequest(BaseModel):
