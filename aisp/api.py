@@ -33,6 +33,12 @@ async def _lifespan(_app: FastAPI):
     """应用启动 / 关闭钩子（取代已弃用的 on_event）。"""
     store.init_meta()
     settings.ensure_dirs()
+    # 上个进程遗留的 queued/running 任务不会被新进程继续推进，启动时回收，
+    # 避免界面永远停在“运行中”。仅在启动钩子里调用，不会误伤本进程新提交的任务。
+    from . import tasks as tasks_mod
+    orphans = tasks_mod.reclaim_orphans()
+    if orphans:
+        log.warning("启动回收孤儿任务 %d 个：%s", len(orphans), ", ".join(orphans[:5]))
     _seed_demo_if_needed()
     yield
 

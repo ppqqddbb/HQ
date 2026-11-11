@@ -53,9 +53,10 @@ def create_task(
     parameters: Optional[Dict[str, Any]] = None,
     filters: Optional[Dict[str, Any]] = None,
     created_by: str = "system",
+    task_id: Optional[str] = None,
 ) -> str:
     store.init_meta()
-    task_id = store.new_id(f"task_{algorithm}")
+    task_id = task_id or store.new_id(f"task_{algorithm}")
     queue = _queue_of(algorithm)
     params = default_params(algorithm)
     params.update(parameters or {})
@@ -289,3 +290,31 @@ def wait(task_id: str, timeout: float = 600.0, interval: float = 0.5) -> Dict[st
             return t
         time.sleep(interval)
     return get_task(task_id) or {}
+
+
+def reclaim_orphans() -> List[str]:
+    """服务启动时回收上个进程遗留的孤儿任务。
+
+    任务只在当前进程的内存线程池里跑，进程一重启，原有的 queued/running
+    任务就再也不会有人推进，状态会永远停在“运行中”。启动时把它们标为失败，
+    让界面不再显示假的“运行中”，也避免调用方无限等待。
+
+    返回被回收的 task_id 列表。
+    """
+    try:
+        df = store.q("SELECT task_id, status, algorithm FROM analysis_task "
+                     "WHERE status IN ('queued','running','created')")
+    except Exception:  # 元数据库还没建好等情况直接跳过，不影响启动
+        return []
+    if df.empty:
+        return []
+    ids = [str(x) for x in df["task_id"].tolist()]
+    for tid in ids:
+        update_task(
+            tid, status="failed", current_stage="已中断",
+            error_code="INTERRUPTED",
+            error_message="服务重启导致任务中断，请重新提交",
+            finished_at=store._now(),
+        )
+    store.audit("task_reclaim", "startup", f"回收孤儿任务 {len(ids)} 个")
+    return ids
