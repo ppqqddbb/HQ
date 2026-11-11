@@ -86,6 +86,19 @@ def _parse_tokens() -> Dict[str, str]:
     return out
 
 
+def _db_role(token: str) -> Optional[str]:
+    """到元数据库查令牌对应的角色（用户在系统管理页维护）。
+
+    失败时一律返回 None（容错）：鉴权不能因为元数据库抖动而误放行，
+    也不能把整个服务打挂。
+    """
+    try:
+        from . import users as users_mod
+        return users_mod.resolve_token(token)
+    except Exception:  # pragma: no cover - 依赖环境
+        return None
+
+
 _TOKEN_RE = re.compile(r"^(?:Bearer\s+)?(.+)$", re.IGNORECASE)
 
 
@@ -102,12 +115,17 @@ def identity_from_headers(headers: Dict[str, str]) -> Identity:
     raw = headers.get("authorization") or headers.get("x-ais-token") or ""
     m = _TOKEN_RE.match(raw.strip())
     token = (m.group(1).strip() if m else "")
-    tokens = _parse_tokens()
-    role = tokens.get(token)
+    # 数据库中的用户优先（可在界面删除/停用后立即失效）；
+    # 环境变量 AISP_TOKENS 作为 CI / 一次性调试的后备。
+    role = _db_role(token)
+    source = "user"
+    if role is None:
+        role = _parse_tokens().get(token)
+        source = "token"
     if role is None:
         return Identity(subject="anonymous", role="anonymous", source="token",
                         authenticated=False)
-    return Identity(subject=f"token:{len(token)}位", role=role, source="token",
+    return Identity(subject=f"token:{len(token)}位", role=role, source=source,
                     authenticated=True)
 
 
@@ -133,6 +151,9 @@ def required_permission(method: str, path: str) -> Optional[str]:
         return "dataset:read"
     if p.startswith("/api/v1/admin/backup") or p.startswith("/api/v1/admin/restore"):
         return "backup:manage"
+    # 用户与角色管理属最高敏感操作，只给 admin（含审计日志写入）
+    if p.startswith("/api/v1/admin/users") or p.startswith("/api/v1/admin/roles"):
+        return "user:manage"
     if p.startswith("/api/v1/models"):
         # 监控页需要看模型卡 / 跑漂移检测 / 登记监控点；写操作视为运行类
         if m == "POST":

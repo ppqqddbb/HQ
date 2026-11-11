@@ -132,6 +132,9 @@ export async function render(view) {
   refreshBtn.addEventListener("click", loadAudit);
   await loadAudit();
 
+  /* ---------------- 用户与角色（技术方案 16.1） ---------------- */
+  await renderUsers(view);
+
   /* ---------------- 备份与恢复（技术方案 19.1 / 20.1） ---------------- */
   await renderBackup(view);
 }
@@ -245,4 +248,212 @@ function shortPath(p) {
   if (!p) return "—";
   const parts = String(p).replace(/\\/g, "/").split("/");
   return parts.length > 2 ? "…/" + parts.slice(-2).join("/") : p;
+}
+
+/* ---------------- 用户与角色（技术方案 16.1） ---------------- */
+
+/**
+ * 渲染用户管理卡片。
+ * 安全口径：令牌明文只在创建/重置的那一次由后端返回，前端必须立刻提示用户复制，
+ * 之后列表里只显示指纹（前 8 位 + 后 4 位）。
+ */
+export async function renderUsers(view) {
+  const host = el("div", {});
+  view.appendChild(host);
+
+  const listBox = el("div", {});
+  const state = { roles: [], users: [], authEnabled: false, protectedUser: "system" };
+
+  const uid = el("input", { placeholder: "如 zhangsan / 工号" });
+  const roleSel = el("select", {});
+  const nameInput = el("input", { placeholder: "显示名（可空）" });
+  const addBtn = el("button", { class: "btn primary sm" }, "新增用户");
+
+  const authWarn = el("div", { class: "note", style: { marginBottom: "10px" } });
+
+  host.appendChild(card("用户与角色", "令牌只存摘要；创建/重置时明文仅显示一次",
+    authWarn,
+    el("div", { class: "toolbar form" },
+      el("div", { class: "field" }, el("label", {}, "用户标识"), uid),
+      el("div", { class: "field" }, el("label", {}, "角色"), roleSel),
+      el("div", { class: "field" }, el("label", {}, "显示名"), nameInput),
+      addBtn),
+    listBox));
+
+  /** 一次性令牌展示：用 prompt 让用户复制，避免长串撑破表格 */
+  const revealToken = (user, token, title) => {
+    const box = el("div", { class: "note", style: { color: "#a8d8fb", marginTop: "8px" } },
+      el("b", {}, `${title}：`), el("code", { style: { wordBreak: "break-all" } }, token));
+    toast(`${user} 的令牌已生成，请立即复制保存`, false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(token).catch(() => {});
+    }
+    // 用模态提示（比 prompt 更可控，且能复制）
+    const m = el("div", { class: "modal" },
+      el("div", { class: "modal-box" },
+        el("h3", {}, `${title}`),
+        el("div", { class: "note" }, "关闭后将无法再次查看，请先复制并妥善保管。"),
+        box,
+        el("div", { class: "modal-actions", style: { marginTop: "14px" } },
+          el("button", {
+            class: "btn primary sm",
+            onclick: (ev) => {
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(token)
+                  .then(() => { ev.target.textContent = "已复制"; })
+                  .catch(() => toast("复制失败，请手动选中", true));
+              } else { toast("当前浏览器不支持自动复制，请手动选中", true); }
+            },
+          }, "复制令牌"),
+          el("button", { class: "btn sm", onclick: () => m.remove() }, "我已保存，关闭"))));
+    m.addEventListener("click", e => { if (e.target === m) m.remove(); });
+    document.body.appendChild(m);
+  };
+
+  const load = async () => {
+    listBox.innerHTML = "";
+    listBox.appendChild(loading("读取用户列表…"));
+    try {
+      const [u, roles] = await Promise.all([api("/admin/users"), api("/admin/roles")]);
+      state.users = u.users || [];
+      state.authEnabled = !!u.auth_enabled;
+      state.protectedUser = u.protected_user || "system";
+      state.roles = roles || [];
+    } catch (e) {
+      listBox.innerHTML = "";
+      listBox.appendChild(el("div", { class: "note", style: { color: "#fca5a5" } }, e.message));
+      return;
+    }
+    listBox.innerHTML = "";
+
+    if (!state.authEnabled) {
+      authWarn.innerHTML = "";
+      authWarn.appendChild(el("span", { style: { color: "#fbbf24" } },
+        "当前未启用鉴权（AISP_AUTH=off），所有请求按本机管理员放行。"
+        + "此处维护的用户与令牌会在开启鉴权后生效。"));
+    } else {
+      authWarn.innerHTML = "";
+      authWarn.appendChild(el("span", {}, "鉴权已开启，用户名下的令牌可立即用于访问 API。"));
+    }
+
+    if (!state.users.length) {
+      listBox.appendChild(empty("暂无用户，填写用户标识后点击「新增用户」"));
+      return;
+    }
+
+    listBox.appendChild(table([
+      { label: "用户标识", render: r => el("b", {}, r.user_id) },
+      { label: "显示名", key: "display_name" },
+      {
+        label: "角色", render: r => {
+          if (r.protected) return el("span", { class: "tag ok" }, r.role_cn);
+          const sel = el("select", { style: { minWidth: "128px" } },
+            ...state.roles.map(x => el("option", {
+              value: x.role, selected: x.role === r.role ? "selected" : null,
+            }, x.role_cn)));
+          sel.addEventListener("change", async () => {
+            sel.disabled = true;
+            try {
+              await api(`/admin/users/${encodeURIComponent(r.user_id)}`, {
+                method: "PATCH", body: JSON.stringify({ role: sel.value }),
+              });
+              toast(`${r.user_id} 角色已改为 ${sel.options[sel.selectedIndex].text}`);
+              await load();
+            } catch (e) {
+              toast(e.message, true);
+              sel.value = r.role;
+            } finally { sel.disabled = false; }
+          });
+          return sel;
+        },
+      },
+      {
+        label: "状态", render: r => {
+          if (r.protected) return el("span", { class: "tag ok" }, "启用");
+          const btn = el("button", { class: "btn sm" }, r.enabled ? "停用" : "启用");
+          btn.addEventListener("click", async () => {
+            btn.disabled = true;
+            try {
+              await api(`/admin/users/${encodeURIComponent(r.user_id)}`, {
+                method: "PATCH", body: JSON.stringify({ enabled: !r.enabled }),
+              });
+              toast(`${r.user_id} 已${r.enabled ? "停用" : "启用"}`);
+              await load();
+            } catch (e) { toast(e.message, true); }
+            finally { btn.disabled = false; }
+          });
+          return el("span", {}, el("span", { class: "tag " + (r.enabled ? "ok" : "bad") },
+            r.enabled ? "启用" : "停用"), " ", btn);
+        },
+      },
+      {
+        label: "令牌指纹", render: r => el("code", {
+          style: { fontSize: "11px", color: "#a8d8fb" },
+        }, r.token_hint || "—"),
+      },
+      {
+        label: "操作", render: r => el("span", {},
+        el("button", {
+          class: "btn sm", style: { marginRight: "6px" },
+          onclick: async (ev) => {
+            ev.target.disabled = true;
+            try {
+              const d = await api(`/admin/users/${encodeURIComponent(r.user_id)}/token`,
+                { method: "POST" });
+              await load();
+              revealToken(r.user_id, d.token, "新令牌已生成");
+            } catch (e) { toast(e.message, true); }
+            finally { ev.target.disabled = false; }
+          },
+        }, "重置令牌"),
+        r.protected ? el("span", { class: "note" }, "内置账号") : el("button", {
+          class: "btn sm",
+          onclick: async (ev) => {
+            if (!confirm(`删除用户 ${r.user_id}？其令牌会立即失效。`)) return;
+            ev.target.disabled = true;
+            try {
+              await api(`/admin/users/${encodeURIComponent(r.user_id)}`, { method: "DELETE" });
+              toast(`${r.user_id} 已删除`);
+              await load();
+            } catch (e) { toast(e.message, true); }
+            finally { ev.target.disabled = false; }
+          },
+        }, "删除")),
+      },
+    ], state.users, { tall: true }));
+  };
+
+  addBtn.addEventListener("click", async () => {
+    const id = uid.value.trim();
+    if (!id) { toast("请填写用户标识", true); return; }
+    addBtn.disabled = true;
+    try {
+      const d = await api("/admin/users", {
+        method: "POST",
+        body: JSON.stringify({
+          user_id: id, role: roleSel.value,
+          display_name: nameInput.value.trim(),
+        }),
+      });
+      uid.value = ""; nameInput.value = "";
+      await load();
+      revealToken(d.user_id, d.token, "用户已创建");
+    } catch (e) { toast(e.message, true); }
+    finally { addBtn.disabled = false; }
+  });
+
+  // 先取角色列表，再渲染（角色下拉需要它）
+  try {
+    state.roles = await api("/admin/roles");
+  } catch (e) {
+    host.innerHTML = "";
+    host.appendChild(el("div", { class: "note", style: { color: "#fca5a5" } }, e.message));
+    return;
+  }
+  roleSel.innerHTML = "";
+  state.roles.forEach(r => roleSel.appendChild(
+    el("option", { value: r.role }, `${r.role_cn}（${r.role}）`)));
+  roleSel.value = "viewer";
+
+  await load();
 }

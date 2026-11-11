@@ -39,6 +39,12 @@ async def _lifespan(_app: FastAPI):
     orphans = tasks_mod.reclaim_orphans()
     if orphans:
         log.warning("启动回收孤儿任务 %d 个：%s", len(orphans), ", ".join(orphans[:5]))
+    # 用户表建表 + 首次引导：没有可用管理员时生成 system 管理员并打印一次令牌。
+    # 令牌明文不落库，只写到日志，避免运维拿不到入口。
+    from . import users as users_mod
+    bootstrap_token = users_mod.ensure_system_admin()
+    if bootstrap_token:
+        log.warning("已生成内置管理员 system 的令牌（仅显示这一次）：%s", bootstrap_token)
     _seed_demo_if_needed()
     yield
 
@@ -538,6 +544,96 @@ def api_audit(limit: int = 100) -> Dict[str, Any]:
 @app.get("/api/v1/admin/config")
 def api_config() -> Dict[str, Any]:
     return pack({"settings": settings.as_dict(), "defaults": DEFAULT_PARAMS})
+
+
+# --------------------------------------------------------- 用户与角色（16.1）
+
+class UserCreateRequest(BaseModel):
+    user_id: str = Field(..., description="登录标识，建议用姓名拼音或工号")
+    role: str = "viewer"
+    display_name: str = ""
+    note: str = ""
+
+
+class UserUpdateRequest(BaseModel):
+    role: Optional[str] = None
+    enabled: Optional[bool] = None
+    display_name: Optional[str] = None
+    note: Optional[str] = None
+
+
+def _actor(request: Request) -> str:
+    ident = getattr(request.state, "identity", None)
+    return ident.subject if ident is not None else "system"
+
+
+@app.get("/api/v1/admin/roles")
+def api_roles() -> Dict[str, Any]:
+    """可选角色及其权限集（前端下拉用）。"""
+    return pack([
+        {"role": r, "role_cn": auth_mod.ROLE_CN.get(r, r),
+         "permissions": sorted(p)}
+        for r, p in auth_mod.ROLE_PERMS.items()
+    ])
+
+
+@app.get("/api/v1/admin/users")
+def api_users() -> Dict[str, Any]:
+    from . import users as users_mod
+
+    return pack({"users": users_mod.list_users(),
+                 "auth_enabled": auth_mod.auth_enabled(),
+                 "protected_user": users_mod.PROTECTED_USER})
+
+
+@app.post("/api/v1/admin/users")
+def api_user_create(req: UserCreateRequest, request: Request) -> Dict[str, Any]:
+    """创建用户；响应中的 token 只返回这一次，请立即保存。"""
+    from . import users as users_mod
+
+    try:
+        u = users_mod.create_user(req.user_id, role=req.role,
+                                  display_name=req.display_name, note=req.note,
+                                  created_by=_actor(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return pack(u, extra={"notice": "令牌只显示一次，请立即复制保存"})
+
+
+@app.patch("/api/v1/admin/users/{user_id}")
+def api_user_update(user_id: str, req: UserUpdateRequest, request: Request) -> Dict[str, Any]:
+    from . import users as users_mod
+
+    try:
+        u = users_mod.update_user(user_id, role=req.role, enabled=req.enabled,
+                                  display_name=req.display_name, note=req.note,
+                                  actor=_actor(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return pack(u)
+
+
+@app.post("/api/v1/admin/users/{user_id}/token")
+def api_user_reset_token(user_id: str, request: Request) -> Dict[str, Any]:
+    """重置令牌；旧令牌立即失效，新令牌只返回这一次。"""
+    from . import users as users_mod
+
+    try:
+        u = users_mod.reset_token(user_id, actor=_actor(request))
+    except ValueError as exc:
+        raise HTTPException(404, str(exc))
+    return pack(u, extra={"notice": "旧令牌已失效，新令牌只显示一次"})
+
+
+@app.delete("/api/v1/admin/users/{user_id}")
+def api_user_delete(user_id: str, request: Request) -> Dict[str, Any]:
+    from . import users as users_mod
+
+    try:
+        users_mod.delete_user(user_id, actor=_actor(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return pack({"deleted": user_id})
 
 
 # --------------------------------------------------------- 模型监控（10.10）
