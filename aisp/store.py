@@ -210,7 +210,17 @@ def _apply_resources(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(f"SET memory_limit='{settings.duckdb_memory_limit}'")
     cores = os.cpu_count() or 4
     con.execute(f"SET threads={max(2, cores - 2)}")
-    con.execute("SET temp_directory=?", [str(settings.tmp_dir)])
+    # temp_directory 已在 _shared_db() 打开 Database 时通过 config 设好；
+    # 这里只是再确认一次。但 DuckDB 有个限制：某个连接一旦已经使用过临时目录
+    # （发生溢写），再在其它连接上 SET temp_directory 就会抛
+    # NotImplementedException: Cannot switch temporary directory after the
+    # current one has been used。该参数是 Database 级别共享的，既然 config
+    # 已经设置，这里失败也不影响正确性，因此降级为忽略，
+    # 否则长任务溢写一次后整个进程后续所有查询都会 500。
+    try:
+        con.execute("SET temp_directory=?", [str(settings.tmp_dir)])
+    except Exception:
+        pass
 
 
 def init_meta() -> None:
