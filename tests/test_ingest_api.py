@@ -186,3 +186,100 @@ def test_dataset_profile_404_for_unknown_version(client):
     body = r.json()
     assert body["ok"] is False
     assert body["error"]["message"]
+
+
+# --------------------------------------------------------------- 上传落盘
+
+def test_safe_filename_strips_path_and_illegal_chars():
+    """浏览器提交的文件名不得直接拼进系统路径（技术方案 16.2）。"""
+    from aisp.ingest import safe_filename
+
+    assert safe_filename("../../etc/passwd.csv") == "passwd.csv"
+    assert safe_filename(r"C:\Windows\system32\a.csv") == "a.csv"
+    assert safe_filename('bad<>:"|?*.csv') == "bad.csv"
+    assert safe_filename("") == "upload.csv"
+    # 超长文件名需被截断，避免触发 Windows 路径上限
+    assert len(safe_filename("x" * 400 + ".csv")) <= 120
+
+
+def test_save_upload_rejects_unsupported_suffix():
+    from aisp.ingest import save_upload
+
+    with pytest.raises(ValueError, match="不支持的文件类型"):
+        save_upload("malware.exe", b"MZ")
+
+
+def test_save_upload_rejects_empty_file():
+    from aisp.ingest import save_upload
+
+    with pytest.raises(ValueError, match="文件为空"):
+        save_upload("empty.csv", b"")
+
+
+def test_save_upload_lands_in_upload_dir_and_is_idempotent(tmp_path, monkeypatch):
+    """同名同内容重复上传应复用同一文件；不同内容不得互相覆盖。"""
+    import io
+
+    from aisp.config import settings
+    from aisp.ingest import save_upload, save_upload_stream
+
+    monkeypatch.setattr(type(settings), "upload_root",
+                        property(lambda self: tmp_path / "uploads"))
+
+    p1 = save_upload("ais.csv", b"MMSI,Timestamp\n1,2025-01-01 00:00:00\n")
+    assert p1.is_file()
+    assert p1.parent == tmp_path / "uploads"
+    assert p1.name.endswith("_ais.csv")
+
+    p2 = save_upload("ais.csv", b"MMSI,Timestamp\n1,2025-01-01 00:00:00\n")
+    assert p2 == p1, "同内容重复上传应复用同一落盘文件"
+
+    p3 = save_upload_stream("ais.csv", io.BytesIO(b"MMSI,Timestamp\n2,2025-01-02 00:00:00\n"))
+    assert p3 != p1, "不同内容必须生成不同文件，原始层不可覆盖"
+    assert p1.read_bytes() != p3.read_bytes()
+
+
+def test_upload_endpoint_saves_file_and_returns_preflight(tmp_path, monkeypatch):
+    """POST /datasets/upload：落盘 + 预检回包，且路径只落在 uploads 下。"""
+    from aisp.config import settings
+
+    monkeypatch.setattr(type(settings), "upload_root",
+                        property(lambda self: tmp_path / "uploads"))
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    from aisp.api import app
+
+    content = (
+        "# Timestamp,MMSI,Latitude,Longitude,SOG\n"
+        "01/01/2025 00:00:00,219000001,55.1,12.1,8.5\n"
+        "01/01/2025 00:05:00,219000001,55.11,12.12,8.7\n"
+    ).encode("utf-8")
+
+    with fastapi_testclient.TestClient(app) as c:
+        r = c.post("/api/v1/datasets/upload",
+                   files={"files": ("ais.csv", content, "text/csv")})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    saved = body["data"]["files"][0]
+    assert saved["size"] == len(content)
+    assert "uploads" in body["data"]["paths"][0]
+    # 预检应识别出标准字段映射
+    assert saved["preflight"]["mapped_columns"]["MMSI"] == "mmsi"
+    assert saved["preflight"]["mapped_columns"]["# Timestamp"] == "event_time"
+
+
+def test_upload_endpoint_hides_path_traversal_filename(tmp_path, monkeypatch):
+    """构造带 ../ 的文件名，确认最终落盘不会逃出 uploads 目录。"""
+    from aisp.config import settings
+
+    up = tmp_path / "uploads"
+    monkeypatch.setattr(type(settings), "upload_root", property(lambda self: up))
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    from aisp.api import app
+
+    with fastapi_testclient.TestClient(app) as c:
+        r = c.post("/api/v1/datasets/upload?preflight=false",
+                   files={"files": ("../../../evil.csv", b"MMSI\n1\n", "text/csv")})
+    assert r.status_code == 200
+    p = Path(r.json()["data"]["paths"][0]).resolve()
+    assert p.parent == up.resolve(), "上传文件必须落在 uploads 目录内"

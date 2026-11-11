@@ -101,6 +101,11 @@ class Settings:
         return self.artifacts_dir / "models"
 
     @property
+    def upload_root(self) -> Path:
+        """浏览器上传的原始 CSV 落盘目录（原始层，只增不改）。"""
+        return self.data_dir / "uploads"
+
+    @property
     def config_versions_dir(self) -> Path:
         return self.artifacts_dir / "config_versions"
 
@@ -115,6 +120,7 @@ class Settings:
             self.models_root,
             self.config_versions_dir,
             self.logs_dir,
+            self.upload_root,
         ):
             p.mkdir(parents=True, exist_ok=True)
 
@@ -124,6 +130,7 @@ class Settings:
             "data_dir": str(self.data_dir),
             "artifacts_dir": str(self.artifacts_dir),
             "logs_dir": str(self.logs_dir),
+            "upload_dir": str(self.upload_root),
             "duckdb_memory_limit": self.duckdb_memory_limit,
             "host": self.host,
             "port": self.port,

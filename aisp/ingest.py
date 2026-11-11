@@ -10,6 +10,7 @@ import csv
 import hashlib
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -185,6 +186,79 @@ def file_sha256(path: Path, chunk: int = 1 << 20) -> str:
 def estimate_rows(path: Path | str) -> int:
     with store.cursor() as con:
         return int(con.execute("SELECT COUNT(*) FROM read_csv_auto(?, header=true)", [str(path)]).fetchone()[0])
+
+
+# --------------------------------------------------------------------------- 上传落盘
+
+MAX_UPLOAD_BYTES = 4 * 1024 ** 3  # 单文件 4 GiB 上限，防止磁盘被意外写满
+_ALLOWED_SUFFIX = {".csv", ".txt", ".tsv"}
+
+
+def safe_filename(name: str) -> str:
+    """把浏览器提交的文件名收敛为安全文件名。
+
+    技术方案 16.2 要求：文件名不得直接拼接为系统路径。
+    这里只保留末级名称，剔除路径分隔符、控制字符与 Windows 非法字符，
+    再限制长度，避免 `../` 穿越与超长路径。
+    """
+    base = str(name or "").replace("\\", "/").split("/")[-1]
+    base = "".join(c for c in base if c.isprintable() and c not in '<>:"|?*\0')
+    base = base.strip(" .") or "upload.csv"
+    if len(base) > 120:
+        stem, dot, ext = base.rpartition(".")
+        base = (stem[:110] + dot + ext) if dot else base[:120]
+    return base
+
+
+def save_upload(filename: str, data: bytes) -> Path:
+    """保存浏览器上传的 CSV 到 RAW 目录，返回落盘路径。
+
+    原始层不可覆盖：同名文件会追加内容指纹前缀，永不复写历史文件。
+    """
+    import io
+
+    return save_upload_stream(filename, io.BytesIO(data), declared_size=len(data))
+
+
+def save_upload_stream(filename: str, fh: Any, declared_size: Optional[int] = None) -> Path:
+    """流式保存上传文件，避免把大文件整体读进内存。
+
+    - 只写入 upload_root，并只取末级文件名（防路径穿越）；
+    - 边写边算 SHA-256，写完才按指纹前缀定名并原子改名；
+    - 超过 4 GiB 立即中断并清理临时文件。
+    """
+    name = safe_filename(filename)
+    if Path(name).suffix.lower() not in _ALLOWED_SUFFIX:
+        raise ValueError(f"不支持的文件类型：{name}（仅允许 .csv/.txt/.tsv）")
+    if declared_size is not None and declared_size == 0:
+        raise ValueError(f"文件为空：{name}")
+
+    settings.upload_root.mkdir(parents=True, exist_ok=True)
+    tmp = settings.upload_root / f".uploading_{uuid.uuid4().hex[:10]}.part"
+    h = hashlib.sha256()
+    total = 0
+    try:
+        with tmp.open("wb") as out:
+            while True:
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise ValueError(f"文件过大：{name}（上限 4 GiB）")
+                h.update(chunk)
+                out.write(chunk)
+        if total == 0:
+            raise ValueError(f"文件为空：{name}")
+        dest = settings.upload_root / f"{h.hexdigest()[:10]}_{name}"
+        tmp.replace(dest)  # 同内容重复上传时直接覆盖为同一内容，不产生新文件
+        return dest
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 # --------------------------------------------------------------------------- 导入

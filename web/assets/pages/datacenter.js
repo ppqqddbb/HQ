@@ -31,6 +31,48 @@ export async function render(view) {
   const impBtn = el("button", { class: "btn primary" }, "导入并治理");
   const preOut = el("div", {});
 
+  /* 浏览器直传：选文件 → POST /datasets/upload（流式落盘到 data/uploads）
+   * 落盘成功后把服务器路径自动回填到上面的路径框，用户确认后再执行预检/导入。 */
+  const filePick = el("input", { type: "file", accept: ".csv,.txt,.tsv", multiple: true, style: { display: "none" } });
+  const upBtn = el("button", { class: "btn" }, "选择文件上传");
+  const upHint = el("div", { style: { fontSize: "11px", color: "var(--txt3)" } },
+    "上传只负责把原始文件安全存到 data/uploads；导入仍需在下方确认。");
+  upBtn.addEventListener("click", () => filePick.click());
+  filePick.addEventListener("change", async () => {
+    const fs = [...filePick.files];
+    if (!fs.length) return;
+    upBtn.disabled = true;
+    const old = upBtn.textContent;
+    upBtn.textContent = "上传中…";
+    preOut.innerHTML = "";
+    preOut.appendChild(loading(`正在上传 ${fs.length} 个文件…`));
+    try {
+      const fd = new FormData();
+      for (const f of fs) fd.append("files", f, f.name);
+      const r = await fetch(`/api/v1/datasets/upload?preflight=true`, { method: "POST", body: fd });
+      const body = await r.json();
+      if (!r.ok || body.ok === false) {
+        throw new Error((body.error && body.error.message) || `HTTP ${r.status}`);
+      }
+      const d = body.data;
+      const lines = (pathInput.value || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      for (const p of d.paths) if (!lines.includes(p)) lines.push(p);
+      pathInput.value = lines.join("\n");
+      preOut.innerHTML = "";
+      preOut.appendChild(el("div", { class: "note" }, `已上传 ${d.files.length} 个文件并回填路径，请确认后执行导入。`));
+      const pfs = d.files.map(f => f.preflight).filter(Boolean);
+      if (pfs.length) preOut.appendChild(renderPreflight(pfs));
+      toast(`上传完成：${d.files.length} 个文件`);
+    } catch (e) {
+      preOut.innerHTML = "";
+      preOut.appendChild(el("div", { class: "note", style: { color: "#fca5a5" } }, e.message));
+    } finally {
+      upBtn.disabled = false;
+      upBtn.textContent = old;
+      filePick.value = "";
+    }
+  });
+
   const importCard = card("导入 AIS 原始数据", "先预检确认编码 / 分隔符 / 时间格式，再执行导入",
     el("div", { class: "toolbar" },
       el("div", { class: "field", style: { minWidth: "520px" } },
@@ -39,7 +81,8 @@ export async function render(view) {
       el("div", { class: "field" }, el("label", {}, "数据集版本标识"), dvInput),
       el("div", { class: "field" }, el("label", {}, "时间格式（可选）"), timeFmtInput),
       el("div", { class: "field" }, el("label", {}, "导入后立即治理"), cleanChk),
-      preBtn, impBtn),
+      preBtn, impBtn, upBtn, filePick),
+    upHint,
     preOut);
   top.appendChild(importCard);
 

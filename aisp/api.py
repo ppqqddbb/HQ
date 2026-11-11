@@ -132,6 +132,39 @@ def api_datasets() -> Dict[str, Any]:
     return pack(dataservice.batches())
 
 
+@app.post("/api/v1/datasets/upload")
+async def api_upload(files: List[UploadFile] = File(...),
+                     preflight: bool = True) -> Dict[str, Any]:
+    """浏览器直传 CSV（流式落盘到 data/uploads），可选返回预检结果。
+
+    与 POST /datasets/import 分工：本接口只负责把文件安全保存到 RAW 层，
+    真正的导入仍需用落盘路径调用 /datasets/import（便于用户先预检再确认）。
+    """
+    if not files:
+        raise HTTPException(400, "请选择要上传的文件")
+    saved: List[Dict[str, Any]] = []
+    for f in files:
+        try:
+            p = ingest_mod.save_upload_stream(f.filename or "upload.csv", f.file,
+                                              getattr(f, "size", None))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            await f.close()
+        item: Dict[str, Any] = {"path": str(p), "name": p.name,
+                                "size": p.stat().st_size}
+        if preflight:
+            try:
+                pf = ingest_mod.preflight(p)
+                item["preflight"] = pf
+            except Exception as exc:  # 预检失败不影响文件已落盘
+                item["preflight_error"] = str(exc)
+        saved.append(item)
+    store.audit("dataset_upload", f"upload:{len(saved)}",
+                ", ".join(s["name"] for s in saved), "web")
+    return pack({"files": saved, "paths": [s["path"] for s in saved]})
+
+
 @app.get("/api/v1/datasets/{dataset_version}/profile")
 def api_profile(dataset_version: str) -> Dict[str, Any]:
     # 未治理完成的数据集直接返回 404，避免向上抛 DuckDB 的 IO 异常（变成 500）
