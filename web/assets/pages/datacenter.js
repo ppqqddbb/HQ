@@ -352,9 +352,35 @@ function renderQuality(box, q, dv) {
       bars(sr.map(r => ({ label: r.reason, value: r.n })), { fmt: v => FMT.num(v) })));
   }
 
+  /* 船型类目多（15 类），独占一行更易读 */
+  box.appendChild(el("div", { style: { marginBottom: "12px" } },
+    card("船型分布", "按清洗后点数，共 " + (q.by_ship_type || []).length + " 类", typeBox)));
+
+  /* 航速 / 航向分布单独成卡，避免挤在产物下载卡片里。
+     注意：ECharts 需要容器已在 DOM 中才能取到宽度，因此先创建、挂载，再绘制。 */
+  const spdC = el("div", { class: "chart", style: { height: "240px" } });
+  const cogC = el("div", { class: "chart", style: { height: "240px" } });
   box.appendChild(el("div", { class: "grid g2" },
-    card("船型分布", "按清洗后点数", typeBox),
-    card("产物下载", "清洗结果与质量报告文件", downloadBox(dv, q))));
+    card("航速分布", "按 1 节分箱，30 节及以上合并显示", spdC),
+    card("航向分布", "按 10 度分箱", cogC)));
+
+  // 对数轴不能吃 0，先剔除空分箱
+  const sh = (q.speed_histogram || []).filter(d => d.knot !== null && d.knot !== undefined && d.n > 0);
+  if (sh.length) {
+    // 锚泊点（0 节）占比接近 60%，线性轴会把 1~30 节压成一条线，因此用对数轴
+    chartBar(spdC, sh.map(d => (d.knot >= 30 ? "30+" : d.knot) + " kn"), sh.map(d => d.n),
+      { yName: "点数（对数）", labelFmt: v => FMT.big(v), rotate: true, yOpt: { type: "log" } });
+  } else spdC.appendChild(empty("无航速数据"));
+
+  const cg = (q.cog_histogram || []).filter(d => d.n > 0);
+  if (cg.length) {
+    chartBar(cogC, cg.map(d => d.deg + "°"), cg.map(d => d.n),
+      { yName: "点数", labelFmt: v => FMT.big(v) });
+  } else cogC.appendChild(empty("无航向数据"));
+
+  /* 产物下载只放按钮，横排一行即可，不单独占半屏 */
+  box.appendChild(el("div", { style: { marginTop: "12px" } },
+    card("产物下载", "清洗结果与质量报告文件，大文件按需下载", downloadBox(dv))));
 
   const bt = q.by_ship_type || [];
   if (bt.length) {
@@ -365,7 +391,7 @@ function renderQuality(box, q, dv) {
   } else typeBox.appendChild(empty("无数据"));
 }
 
-function downloadBox(dv, q) {
+function downloadBox(dv) {
   const names = ["quality_report.json", "staypoints.parquet", "trajectory_segments.parquet"];
   const wrap = el("div", {});
   wrap.appendChild(el("div", { class: "note" },
@@ -381,12 +407,5 @@ function downloadBox(dv, q) {
       },
     }, n)));
   wrap.appendChild(tb);
-  const bc = el("div", { class: "chart", style: { height: "180px", marginTop: "10px" } });
-  wrap.appendChild(bc);
-  const sh = q.speed_histogram || [];
-  if (sh.length) {
-    chartBar(bc, sh.map(d => (d.k >= 30 ? "30+" : d.k) + "kn"), sh.map(d => d.n),
-      { yName: "点数", labelFmt: v => FMT.big(v) });
-  } else bc.style.display = "none";
   return wrap;
 }
