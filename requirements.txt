@@ -1,0 +1,30 @@
+# AIS 船舶航迹数据分析与可视化系统 —— 运行时依赖
+# 版本为该开发环境（Anaconda py310）实测通过的下界，安装时请勿跨大版本跳跃。
+duckdb>=1.1,<2.0
+pyarrow>=17,<24
+pandas>=2.2,<3.0
+numpy>=1.26,<3.0
+polars>=1.0,<2.0
+pyproj>=3.6,<4.0
+shapely>=2.0,<3.0
+geopandas>=1.0,<2.0
+hdbscan>=0.8.38,<1.0
+scikit-learn>=1.4,<2.0
+scipy>=1.11,<2.0
+tslearn>=0.6,<1.0
+matplotlib>=3.8,<4.0
+
+# API 服务
+fastapi>=0.110,<1.0
+uvicorn>=0.27,<1.0
+python-multipart>=0.0.9,<1.0
+sse-starlette>=2.0,<4.0
+pydantic>=2.6,<3.0
+python-dotenv>=1.0,<2.0
+
+# 深度学习（CPU 版即可完成训练与推理；有 CUDA 时按官方指引替换）
+torch>=2.2
+
+# 测试
+pytest>=8.0
+httpx>=0.27

@@ -1,0 +1,92 @@
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+secrets/
+credentials/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.pyre/
+.ruff_cache/
+.pytype/
+.coverage
+.coverage.*
+htmlcov/
+
+# 数据集、用户文件与运行产物
+data/
+datasets/
+uploads/
+downloads/
+raw_data/
+processed_data/
+interim_data/
+external_data/
+logs/
+log/
+tmp/
+temp/
+cache/
+.cache/
+artifacts/
+outputs/
+_scratch/
+checkpoints/
+weights/
+experiments/
+*.parquet
+*.feather
+*.pkl
+*.pickle
+*.joblib
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite3
+*.db
+
+# 前端依赖与构建产物
+node_modules/
+dist/
+build/
+
+# 打包与临时文件
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE 本地状态
+.idea/
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# Notebook
+.ipynb_checkpoints/
