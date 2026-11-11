@@ -135,7 +135,9 @@ def _rdp(points: List[List[float]], eps_m: float) -> List[List[float]]:
         if norm < 1e-9:
             d = np.hypot(sub[:, 0] - pts[a][0], sub[:, 1] - pts[a][1])
         else:
-            d = np.abs(np.cross(seg, sub - pts[a])) / norm
+            # 显式计算二维叉积模长：np.cross 对 2 维向量已在 NumPy 2.0 弃用
+            rel = sub - pts[a]
+            d = np.abs(seg[0] * rel[:, 1] - seg[1] * rel[:, 0]) / norm
         i = int(np.argmax(d))
         if d[i] > eps_m:
             keep[a + 1 + i] = True
@@ -269,15 +271,37 @@ def vessels(dataset_version: str, filters: Optional[Dict[str, Any]] = None, limi
     return df.to_dict(orient="records")
 
 
-def vessel_track(dataset_version: str, mmsi: str, max_points: int = 3000) -> Dict[str, Any]:
+def vessel_track(dataset_version: str, mmsi: str, max_points: int = 5000) -> Dict[str, Any]:
+    """返回单船全天轨迹（超过 max_points 时按时间等间隔抽样）。
+
+    原先用 LIMIT 直接截断，只能拿到当天开头的一小段，回放会在半天处
+    突然结束；改为等间隔抽样后，轨迹覆盖全天且点数可控。
+    """
+    mp = max(50, int(max_points))
     con = open_dataset(dataset_version)
     try:
         df = con.execute(
-            f"""SELECT event_time, lon, lat, sog, cog, heading, traj_id, quality_flags
-                FROM clean_points WHERE mmsi = ? ORDER BY event_time
-                LIMIT {int(max_points)}""",
+            f"""
+            WITH src AS (
+                SELECT event_time, lon, lat, sog, cog, heading, traj_id, quality_flags,
+                       row_number() OVER (ORDER BY event_time) AS rn,
+                       count(*) OVER () AS total
+                FROM clean_points WHERE mmsi = ?
+            )
+            SELECT event_time, lon, lat, sog, cog, heading, traj_id, quality_flags
+            FROM src
+            WHERE total <= {mp}
+               OR rn % CAST(greatest(1, ceil(total / {mp}.0)) AS BIGINT) = 1
+               OR rn = total
+            ORDER BY event_time
+            """,
             [str(mmsi)],
         ).fetchdf()
+        total = 0
+        if len(df):
+            total = int(con.execute(
+                "SELECT count(*) FROM clean_points WHERE mmsi = ?", [str(mmsi)]
+            ).fetchone()[0])
         stays = []
         sp = settings.clean_root / dataset_version / "staypoints.parquet"
         if sp.is_file():
@@ -290,7 +314,9 @@ def vessel_track(dataset_version: str, mmsi: str, max_points: int = 3000) -> Dic
     finally:
         con.close()
     df["event_time"] = df["event_time"].astype(str)
-    return {"mmsi": str(mmsi), "points": df.to_dict(orient="records"), "staypoints": stays.to_dict(orient="records") if len(stays) else []}
+    return {"mmsi": str(mmsi), "points": df.to_dict(orient="records"),
+            "total_points": total, "sampled": bool(total > len(df)),
+            "staypoints": stays.to_dict(orient="records") if len(stays) else []}
 
 
 def staypoints(dataset_version: str, limit: int = 5000) -> List[Dict[str, Any]]:

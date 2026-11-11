@@ -155,6 +155,12 @@ table.dt .num{text-align:right;font-variant-numeric:tabular-nums}
 .map-legend b{color:var(--txt)}
 .map-hud{position:absolute;right:12px;top:12px;background:rgba(9,16,27,.86);border:1px solid var(--line2);
   border-radius:8px;padding:9px 12px;font-size:11.5px;color:var(--txt2);z-index:5}
+.map-play{position:absolute;right:12px;bottom:12px;left:296px;background:rgba(9,16,27,.9);
+  border:1px solid var(--line2);border-radius:8px;padding:9px 12px;font-size:11.5px;
+  color:var(--txt2);z-index:6}
+.map-play input[type=range]{accent-color:#22d3ee;height:4px}
+.map-select{position:absolute;border:1.5px dashed #22d3ee;background:rgba(34,211,238,.14);
+  pointer-events:none;z-index:7}
 
 .taskbar{display:flex;gap:12px;align-items:center;padding:8px 12px;background:var(--panel);
   border:1px solid var(--line);border-radius:8px;font-size:12px;margin-bottom:12px}
