@@ -18,8 +18,11 @@
 | 船舶编群分析 | 候选对预筛 → 统一时间栅格重采样 → 多变量 DTW（Sakoe-Chiba 带）→ average linkage 层次聚类 |
 | 频繁轨迹挖掘 | 规则网格 + DDA 网格穿越补格 + 有向转移边 + 频繁航线（支持度按航次去重） |
 | 航迹预测与回测 | 匀速外推 / 卡尔曼滤波 / GRU 残差学习，时间外推切分，ADE / FDE / P90 / 截尾均值 + 分层评估 |
-| 可视化前端 | 10 个页面，自研 Canvas 瓦片地图（支持离线），ECharts 主题化图表 |
-| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、80 项自动化测试 |
+| 模型卡与上线监控 | 模型卡（训练边界/特征/依赖/失效场景）、PSI 输入分布漂移、回填误差趋势、监控点台账与重训判定 |
+| 可视化前端 | 11 个页面，自研 Canvas 瓦片地图（支持离线）、轨迹回放与三种空间筛选（矩形/多边形/圆形）、ECharts 主题化图表 |
+| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、144 项自动化测试 |
+| 身份与权限 | RBAC 五角色（管理员/数据管理员/分析师/只读/审计），Bearer 或 `X-AIS-Token` 两种令牌传递方式，越权操作落审计 |
+| 备份与恢复 | DuckDB `EXPORT DATABASE` 导出式备份（zip），CLI 与系统管理页双入口，恢复后自动校验 |
 | 报告导出 | 每类分析生成离线可打开的 HTML 报告（内嵌 SVG 图表、无外部依赖）与 Markdown 版本，含参数、口径与可追溯信息 |
 
 ---
@@ -49,9 +52,9 @@
                     │ tasks.py   队列 + 进度 + SSE + 审计          │
                     │ store.py   进程内共享 DuckDB + 元数据库      │
                     └──────────────────┬──────────────────────────┘
-                                       ▼  FastAPI (api.py, 29 个端点)
+                                       ▼  FastAPI (api.py, 31 个路径 / 38 个端点)
                     ┌─────────────────────────────────────────────┐
-                    │ web/  10 个页面（原生 ESM + ECharts + Canvas）│
+                    │ web/  11 个页面（原生 ESM + ECharts + Canvas）│
                     └─────────────────────────────────────────────┘
 ```
 
@@ -78,10 +81,14 @@ HQ/
 │   ├── store.py              # DuckDB 连接管理与元数据库
 │   ├── tasks.py              # 任务队列、进度、审计
 │   ├── dataservice.py        # 地图与数据集查询
-│   ├── api.py                # FastAPI 应用（29 个端点）
-│   ├── cli.py                # 命令行入口
+│   ├── auth.py               # RBAC 角色权限与令牌校验
+│   ├── backup.py             # DuckDB 导出式备份与恢复
+│   ├── modelmon.py           # 模型卡、PSI 漂移、回填误差监控
+│   ├── report.py             # 自包含 HTML / Markdown 报告生成
+│   ├── api.py                # FastAPI 应用（31 个路径 / 38 个端点）
+│   ├── cli.py                # 命令行入口（import/clean/run/backup/restore）
 │   └── algorithms/           # 六类分析算法
-│       ├── common.py         # 统一过滤条件与结果写盘
+│       ├── common.py         # 统一过滤条件（矩形/多边形/圆形）与结果写盘
 │       ├── hotspot.py  profile.py  correlate.py
 │       ├── formation.py  dtw.py  frequent_route.py  predict.py
 ├── web/                      # 前端（零构建）
@@ -89,12 +96,17 @@ HQ/
 │   ├── vendor/echarts.min.js
 │   └── assets/
 │       ├── app.js  util.js  charts.js  state.js  taskrun.js  style.css
-│       └── pages/            # 10 个页面模块
-├── tests/                    # pytest（80 项）
+│       └── pages/            # 11 个页面模块（含 models.js）
+├── tests/                    # pytest（144 项）
 │   ├── conftest.py           # 测试期隔离 artifacts 目录
 │   ├── test_geo.py           # 空间与网格
 │   ├── test_stats.py         # 统计与质量口径
-│   ├── test_ingest_api.py    # 导入与 API 契约
+│   ├── test_dataservice.py   # 空间筛选 SQL 下推
+│   ├── test_ingest_api.py    # 导入与 API 契约（含模型端点）
+│   ├── test_auth.py          # RBAC 权限映射与令牌解析
+│   ├── test_backup.py        # 备份导出/恢复
+│   ├── test_tasks.py         # 孤儿任务回收与取消语义
+│   ├── test_modelmon.py      # PSI、模型卡、监控点、误差趋势
 │   └── test_report.py        # 报告导出与口径去重
 ├── data/                     # 原始 CSV（不入库）
 ├── artifacts/                # 清洗结果、结果产物、元数据库（不入库）
@@ -188,14 +200,15 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 |---|---|---|
 | `#/overview` | 总览工作台 | KPI、逐小时上报量、船型占比、航速构成（对数轴）、质量维度、任务状态、快捷入口 |
 | `#/datacenter` | 文件与批次 | 文件预检、浏览器上传、批次表、质量报告、异常标记分布、下载 |
-| `#/map` | AIS 轨迹地图 | Canvas 瓦片地图、轨迹线、密度网格、驻留点、船型多选、船舶清单 |
+| `#/map` | AIS 轨迹地图 | Canvas 瓦片地图、RDP 轨迹线、密度网格、驻留点、船型多选、轨迹回放、三种空间筛选（矩形/多边形/圆形）、船舶清单 |
 | `#/hotspot` | 热点区域分析 | 网格热力 + 凸包 + 聚类标签、簇表（可仅看主要热点）、参数敏感性 ARI |
 | `#/profile` | 船舶目标画像 | 船舶列表（吸顶）、速度直方、航向玫瑰、逐小时曲线、单船/多船雷达 |
 | `#/correlate` | 属性关联分析 | 发散色阶相关矩阵、BH 校正边表、滞后相关曲线 |
 | `#/formation` | 船舶编群分析 | 编群卡片、DTW 距离矩阵（前 40 条）、船对明细 |
 | `#/routes` | 频繁轨迹挖掘 | 网格热力、有向转移边、TOP 航线高亮与航线表 |
 | `#/predict` | 航迹预测 | 截尾/平均 ADE 分组柱图、逐步误差、分层表、样例轨迹、GRU 损失、上线判定 |
-| `#/admin` | 系统管理 | 数据字典、源字段映射、默认参数、队列配置、审计日志 |
+| `#/models` | 模型监控 | 模型卡（训练边界/特征/依赖/失效场景/分层覆盖）、PSI 漂移检测、回填误差趋势、监控点台账 |
+| `#/admin` | 系统管理 | 数据字典、源字段映射、默认参数、队列配置、审计日志、备份与恢复 |
 
 ### 报告导出
 
@@ -209,9 +222,21 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 报告内固定包含**可追溯三件套**：任务 ID、数据集版本、代码版本（Git 短哈希），
 以及该算法的「结论口径与使用边界」，避免指标被脱离上下文引用。
 
+### 地图空间筛选
+
+地图页顶部「空间筛选」支持三种范围，**全部在 SQL 内下推**（不在前端过滤，也不拉全量点）：
+
+| 方式 | 操作 | 实现 |
+|---|---|---|
+| 矩形 | 在画布上拖拽 | `lon/lat` 双条件区间 |
+| 多边形 | 逐点点击，双击闭合；`Esc` 取消 | 射线法判定，先用外包围盒裁剪 |
+| 圆形 | 拖拽定半径 | 等距圆柱近似 + 球面半径校验 |
+
+同样参数可直接用于 `/map/trajectories`、`/map/points`、`/vessels`（`polygon=<JSON>`、`circle=lon,lat,km`）。
+
 ---
 
-## 7. API 清单（29 个端点）
+## 7. API 清单（31 个路径 / 38 个端点）
 
 统一响应结构：成功 `{request_id, ok: true, data}`，失败 `{request_id, ok: false, error: {code, message}}`。
 
@@ -232,9 +257,9 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/map/overview` | 总览聚合（KPI、时间分布、船型、质量） |
-| GET | `/api/v1/map/trajectories` | 轨迹抽稀（RDP） |
-| GET | `/api/v1/map/points` | 点位上图（按缩放聚合） |
-| GET | `/api/v1/vessels` | 船舶列表 |
+| GET | `/api/v1/map/trajectories` | 轨迹抽稀（RDP，支持 `bbox` / `polygon` / `circle`） |
+| GET | `/api/v1/map/points` | 点位上图（按缩放聚合，支持 `bbox` / `polygon` / `circle`） |
+| GET | `/api/v1/vessels` | 船舶列表（支持 `bbox` / `polygon` / `circle`） |
 | GET | `/api/v1/vessels/{mmsi}/trajectory` | 单船轨迹 |
 | GET | `/api/v1/staypoints` | 驻留点 |
 
@@ -253,13 +278,27 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | POST | `/api/v1/tasks/{id}/cancel` | 取消任务 |
 | GET | `/api/v1/tasks/{id}/events` | SSE 进度流 |
 
-### 系统
+### 模型监控
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET | `/api/v1/models` | 模型卡列表（按创建时间倒序） |
+| GET | `/api/v1/models/{model_id}` | 模型卡 + 监控日志 + 误差趋势 + 最近漂移结论 |
+| POST | `/api/v1/models/{model_id}/drift` | PSI 漂移检测（`reference_dataset` 与 `dataset_version` 不同时才有判定意义） |
+| POST | `/api/v1/models/{model_id}/monitor` | 登记监控点（预测数/回填数/延迟/回填 ADE；可指定 `ts` 补录） |
+
+### 身份、备份与系统
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/whoami` | 当前身份与权限集（公开，无需令牌） |
 | GET | `/api/v1/admin/meta` | 数据字典与字段映射 |
 | GET | `/api/v1/admin/audit` | 审计日志 |
 | GET | `/api/v1/admin/config` | 运行时配置（已脱敏） |
+| POST | `/api/v1/admin/backup` | 创建备份（导出式 zip） |
+| GET | `/api/v1/admin/backups` | 备份列表 |
+| GET | `/api/v1/admin/backups/{name}` | 下载备份 |
+| POST | `/api/v1/admin/restore` | 从备份恢复 |
 | GET | `/api/v1/health` | 健康检查 |
 
 另有 `GET /`（前端入口）与 `GET /favicon.ico`。
@@ -293,7 +332,32 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | 属性关联 | 2,270 独立样本，45 组检验全部显著（BH 校正后） |
 | 船舶编群 | 120 序列 / 1,003 对评估，识别 3 群，DTW 耗时 3.3 s |
 | 频繁轨迹 | 10×10 网格，72 高频格、145 条有向转移边、19 条航线 |
-| 航迹预测 | 30,652 窗口；截尾 ADE：CV 1.59 km / Kalman 1.64 km / **GRU 297 m** |
+| 航迹预测 | 30,652 窗口；截尾 ADE：CV 1.59 km / Kalman 1.64 km / **GRU 297 m**（改善 81.3%，达上线门槛） |
+| 模型监控 | 3 个模型卡；PSI 自比 5 个特征均为 0.0（stable）；缺失率 sog 5.1% / cog 13.0% / rot 30.9% / heading 21.6% / report_gap_s 0% |
+
+### 8.3 2025-01-02 全量重跑（含 FROZEN_GPS 修复）
+
+| 指标 | 数值 |
+|---|---|
+| 原始行数 | 14,517,030 |
+| 清洗后行数 | **8,082,709** |
+| 船舶数（MMSI） | **2,460** |
+| 轨迹段 / 可用段 | 14,655 / 7,287 |
+| 驻留点 | 5,506 |
+| 综合质量分 | **96.90**（有效性 92.14） |
+| 异常标记 | SPEED_SPIKE 7,299 / JUMP 14,235 / GPS_DRIFT 12,479 / **FROZEN_GPS 6,186** |
+| 航迹预测 | 28,809 窗口；截尾 ADE：CV 1.87 km / **GRU 347 m**（改善 81.43%） |
+
+**FROZEN_GPS（冻结/卡死 GPS）**：位置逐位不变却持续报告航行速度的设备故障。
+典型样本为 MMSI `244710047` —— 6136 条记录坐标全为 `(-85.392, -41.696)`（大西洋），
+却报告 SOG=25.4 kn 持续 17.2 小时。因为相邻点位移恰为 0，原有的跳点/推算速度/
+漂移规则全部失效，错误坐标会把数据集包络拉到 `lon[-152.9,154.9] lat[-84.6,59.0]`，
+并让模型卡的「训练区域」从欧洲海域失真为跨大西洋。
+
+检测方式：按 mmsi 用 gaps-and-islands 把位置逐位未变的相邻点编为同一段，
+段内 `max(sog) ≥ 2 kn`、连续点数 ≥ 20 且持续 ≥ 15 分钟即整段标记。
+**真实锚泊/靠泊（SOG≈0）不会被误判**——实测 48 小时不动、8641 点的泊位样本 0 误报。
+阈值可配：`frozen_gps_sog_kn` / `frozen_gps_min_points` / `frozen_gps_min_minutes`。
 
 ---
 
@@ -301,7 +365,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ```powershell
 & "D:\File\Anaconda\envs\py310\python.exe" -m pytest tests -q
-# 80 passed
+# 144 passed
 ```
 
 覆盖范围：
@@ -310,16 +374,86 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 |---|---|
 | `test_geo.py` | 球面距离、投影往返、网格左闭右开边界、外边界归并、DDA 四连通性、圆均值跨北 |
 | `test_stats.py` | BH 单调性与上界、强度分档对称性、航线连续匹配语义、质量权重和为 1、加权公式复算 |
-| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知资源 404、上传文件名净化与路径穿越防护 |
+| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知资源 404、上传文件名净化与路径穿越防护、模型端点契约 |
+| `test_dataservice.py` | 矩形/多边形/圆形筛选的 SQL 下推与结果一致性 |
+| `test_auth.py` | 五角色权限映射、令牌解析（Bearer / `X-AIS-Token`）与默认本机管理员 |
+| `test_backup.py` | 导出式备份产物、恢复后元数据一致性 |
+| `test_tasks.py` | 任务初始状态、服务重启后孤儿任务回收（queued/running→failed）、终态不被覆盖、幂等性、取消语义 |
+| `test_modelmon.py` | PSI 数值与分级、模型卡字段完整性、监控点与回填趋势、补录时间排序、漂移结论落盘 |
+| `test_clean_frozen.py` | FROZEN_GPS 冻结段识别、计入质量扣分；正常航行/真实锚泊/短暂停靠不被误报；阈值可配 |
 | `test_report.py` | 报告自包含（无 CDN/脚本）、可追溯字段、表格与内嵌 SVG、HTML 转义、降采样保留高热度、未知/未完成任务拒绝、落盘与格式校验 |
 
 测试期通过 `conftest.py` 把 `artifacts/` 重定向到临时目录，避免与运行中的服务争抢 DuckDB 文件锁。
 
 ---
 
-## 10. 已知限制
+## 10. 身份与权限（RBAC）
 
-1. **数据范围**：当前仅导入 2025-01-01 单日数据。跨日趋势、周日/季节效应、长期预测需扩充数据。
+默认 `AISP_AUTH=off`，本机自动视为管理员，单人调试无需登录。
+若设为 `on`，除 `/api/v1/health`、`/api/v1/whoami` 与静态资源外，
+所有接口均需携带令牌（`Authorization: Bearer <token>` 或 `X-AIS-Token: <token>`）。
+
+| 角色 | 中文 | 权限 |
+|---|---|---|
+| `admin` | 管理员 | 全部（含备份、恢复、配置、审计） |
+| `data_manager` | 数据管理员 | 导入/治理/下载 + 跑分析 + 读审计与配置 |
+| `analyst` | 分析人员 | 读数据集 + 跑分析 + 看报告 |
+| `viewer` | 只读用户 | 读数据集/结果/报告 |
+| `auditor` | 审计人员 | 读数据集/结果/报告 + 读审计日志 |
+
+前端右上角有「身份」徒标，点击可录入令牌；令牌无效或缺失时自动弹出，
+所有下载按钮统一走 `downloadFile()` 携带令牌。越权访问会返回 403 并记录 `auth_denied` 审计。
+
+```powershell
+$env:AISP_AUTH = "on"
+$env:AISP_TOKENS = "adminToken=admin,analystToken=analyst"
+```
+
+---
+
+## 11. 备份与恢复
+
+使用 DuckDB 的 `EXPORT DATABASE` 导出元数据库（Parquet + CSV），再打为 zip：
+单日数据的元数据库备份仅约 **146 KB**（不含清洗 Parquet）。
+
+```powershell
+& "D:\File\Anaconda\envs\py310\python.exe" -m aisp.cli backup
+& "D:\File\Anaconda\envs\py310\python.exe" -m aisp.cli restore --name <备份文件名>
+```
+
+也可在「系统管理」页一键创建与下载。**恢复会覆盖当前元数据库**，操作前请先停服务；
+接口会先校验备份包并将旧库重命名为 `.bak`，以便回滚。
+
+---
+
+## 12. 模型卡与上线监控
+
+航迹预测任务成功后自动生成**模型卡**（`artifacts/models/<model_id>/model_card.json`，
+`artifacts/results/<task_id>/model_card.json` 另存副本），内容包含：
+
+- 训练数据边界（数据集版本、时间范围、经纬度范围、轨迹/窗口/训练/测试数）
+- 评估指标与上线判定（GRU vs 基线的截尾 ADE、改善百分比、是否达门槛）
+- 输入特征清单与依赖版本（可复现的最小信息）
+- 分层覆盖（按航速/船型分组的样本量与截尾 ADE）与 5 条已知失效场景
+
+监控页（`#/models`）提供两项在线巡检：
+
+| 能力 | 口径 |
+|---|---|
+| 输入分布漂移（PSI） | 以训练期为参照分箱对比当前数据集；`<0.10` 稳定、`≥0.10` 需关注、`≥0.25` 建议重训 |
+| 回填误差趋势 | 上线后实际回填的截尾 ADE 相对首评变化；恶化 `≥20%` 时提示重训 |
+
+**注意自比陷阱**：若 `reference_dataset` 与 `dataset_version` 相同，PSI 必然为 0，
+界面会显式标出「自比提醒」，避免被误读为“分布完全稳定”。真实漂移判定必须用不同时间段的数据。
+
+监控点可用两种方式登记：接口 `/models/{id}/monitor`（支持 `ts` 补录历史点，落盘后按时间排序）
+或页面上的「登记监控点」弹窗。模型上线前必须形成模型卡并通过业务与合规确认。
+
+---
+
+## 13. 已知限制
+
+1. **数据范围**：当前默认数据集为 2025-01-01 单日（另已导入 2025-01-02 用于跨日漂移验证）。跨季趋势、周日/季节效应、长期预测需继续扩充数据。
 2. **静止点占比高**（约 66.5%）：AIS 系泊船舶持续上报，属数据常态。预测指标须**分速度层**阅读——静止层误差仅百米级，巡航层误差达公里级。
 3. **热点凸包 ≠ 水域边界**：凸包是密度簇的简化几何，不能直接作为航道或锚地边界使用。
 4. **频繁航线 ≠ 官方航道**：基于规则网格与支持度的统计模式，未与官方航道数据校准。
@@ -327,10 +461,11 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 6. **编群分析**：DTW 阈值需结合业务经验标定；静止船舶在位置上天然接近，可能形成“假编群”。
 7. **预测模型**：GRU 数值来自单日数据、时间外推切分；上线前需在更长时段与独立数据集上复验。
 8. **地图底图**：无在线底图，仅绘制经纬网格；如需真实底图可挂接离线瓦片目录。
+9. **冻结 GPS 检测依赖 SOG**：若数据源整段缺失 SOG，无法区分「设备卡死」与「真实锚泊」，只能靠位置/时间规则判断，此时该段不会被标记 FROZEN_GPS。
 
 ---
 
-## 11. 配置项
+## 14. 配置项
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
@@ -338,12 +473,14 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | `DATA_DIR` | `data` | 原始 CSV 目录（相对项目根） |
 | `ARTIFACTS_DIR` | `artifacts` | 治理结果、结果产物、元数据库 |
 | `DUCKDB_MEMORY_LIMIT` | `12GB` | DuckDB 内存上限 |
+| `AISP_AUTH` | `off` | 是否启用令牌鉴权（`on` / `off`） |
+| `AISP_TOKENS` | 空 | 令牌→角色映射，如 `tok1=admin,tok2=analyst` |
 
 完整示例见 `.env.example`。`.env` 已被 `.gitignore` 忽略，不会误提交。
 
 ---
 
-## 12. 故障排查
+## 15. 故障排查
 
 | 现象 | 原因与处理 |
 |---|---|
