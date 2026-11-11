@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -348,11 +349,29 @@ def staypoints(dataset_version: str, limit: int = 5000) -> List[Dict[str, Any]]:
 
 
 def batches() -> List[Dict[str, Any]]:
+    """批次列表。
+
+    data_batch 本身没有 MMSI 数 / 编码两列（它们在导入时写进了 profile_json），
+    直接把 profile_json 丢掉会让前端这两列永远显示「—」，因此在这里展开。
+    """
     df = store.batch_list()
     if df.empty:
         return []
     df["created_at"] = df["created_at"].astype(str)
-    return df.drop(columns=["profile_json"], errors="ignore").to_dict(orient="records")
+    rows: List[Dict[str, Any]] = []
+    for r in df.to_dict(orient="records"):
+        prof_raw = r.pop("profile_json", None)
+        prof: Dict[str, Any] = {}
+        if prof_raw:
+            try:
+                prof = json.loads(prof_raw) if isinstance(prof_raw, str) else dict(prof_raw)
+            except (ValueError, TypeError):
+                prof = {}
+        r["mmsi_count"] = prof.get("m")
+        r["encoding"] = prof.get("encoding")
+        r["time_range"] = [prof.get("t0"), prof.get("t1")] if prof.get("t0") else None
+        rows.append(r)
+    return rows
 
 
 def data_dictionary() -> Dict[str, Any]:

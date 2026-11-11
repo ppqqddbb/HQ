@@ -159,7 +159,7 @@ export async function render(view) {
         { label: "批次", key: "batch_id" },
         { label: "数据源", key: "source_name" },
         { label: "行数", num: true, render: r => FMT.big(r.row_count) },
-        { label: "MMSI", num: true, render: r => FMT.num(r.mmsi_count) },
+        { label: "MMSI", num: true, render: r => (r.mmsi_count === null || r.mmsi_count === undefined) ? "—" : FMT.num(r.mmsi_count) },
         { label: "编码", render: r => r.encoding || "—" },
         { label: "导入时间", render: r => FMT.ts(r.created_at) },
         {

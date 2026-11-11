@@ -379,6 +379,11 @@ def ingest_csv(
         con.execute("DROP TABLE IF EXISTS _stage")
 
     profile = staging_profile(batch_id)
+    # 编码 / 分隔符原本只存在于导入时的内存变量里，重启后前端就无法展示，
+    # 这里一并写进 profile_json，保证「批次表」能长期显示真实编码。
+    profile["encoding"] = first["encoding"]
+    profile["delimiter"] = first["delimiter"]
+    profile["mapped_columns"] = first["mapped_columns"]
 
     store.exec_sql(
         "INSERT INTO data_batch VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
