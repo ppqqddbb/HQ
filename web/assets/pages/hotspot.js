@@ -146,9 +146,14 @@ export async function render(view) {
         { label: "航次", num: true, render: r => FMT.num(r.distinct_traj) },
         { label: "中心", render: r => `${(r.center_lon ?? 0).toFixed(3)}, ${(r.center_lat ?? 0).toFixed(3)}` },
         { label: "面积", num: true, render: r => (r.area_km2 ?? 0).toFixed(1) + " km²" },
-        { label: "均速", num: true, render: r => (r.avg_sog === null || r.avg_sog === undefined ? "—" : r.avg_sog.toFixed(1) + " kn") },
+        { label: "均速", num: true, render: r => (r.avg_sog === null || r.avg_sog === undefined ? "无 SOG 上报" : r.avg_sog.toFixed(1) + " kn") },
         { label: "驻留占比", num: true, render: r => FMT.pct(r.dwell_ratio || 0) },
-        { label: "主航向", num: true, render: r => (r.main_cog_deg === null || r.main_cog_deg === undefined ? "—" : r.main_cog_deg.toFixed(0) + "°") },
+        {
+          label: "主航向", num: true,
+          render: r => (r.main_cog_deg === null || r.main_cog_deg === undefined)
+            ? "静止无航向"
+            : r.main_cog_deg.toFixed(0) + "°",
+        },
         {
           label: "操作", render: r => el("button", {
             class: "btn sm", onclick: () => zoomCluster(r),
