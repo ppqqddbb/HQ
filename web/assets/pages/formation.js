@@ -152,13 +152,14 @@ export async function render(view) {
         { label: "航速差", num: true, render: r => (r.delta_sog ?? 0).toFixed(2) + " kn" },
         { label: "航向差", num: true, render: r => (r.delta_cog ?? 0).toFixed(1) + "°" },
         { label: "对齐步数", num: true, render: r => FMT.num(r.aligned_steps) },
-        { label: "包围盒", num: true, render: r => r.bbox_m ? FMT.m(r.bbox_m) : "—" },
+        { label: "包围盒间隙", num: true, render: r => r.bbox_m ? FMT.m(r.bbox_m) : "—" },
       ], pairs.slice(0, 300), { tall: true }));
     } else pairBox.appendChild(empty("无数据"));
 
     if ((d.notes || []).length) {
       pairBox.appendChild(el("div", { class: "note", style: { marginTop: "10px" } },
-        ...d.notes.map(n => el("div", {}, "· " + n))));
+        ...d.notes.map(n => el("div", {}, "· " + n)),
+        el("div", {}, "· 包围盒间隙为两船轨迹包围盒的最小间距（下界剪枝用），不是实际距离；实际距离看「平均间距」。")));
     }
   }
 }
