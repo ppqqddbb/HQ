@@ -350,6 +350,34 @@ def api_task_download(task_id: str, name: str):
     return FileResponse(str(p), filename=name)
 
 
+@app.get("/api/v1/tasks/{task_id}/report")
+def api_task_report(task_id: str, format: str = "html") -> Response:
+    """导出分析报告（技术方案 11.4）。
+
+    - format=html：自包含可打印页面，浏览器直接打开即可打印/另存为 PDF；
+    - format=md：Markdown 文本，便于归档到 Git 或知会文档；
+    - 报告会同时落盘到结果目录，可用 /files 与 /download 取得。
+    """
+    from . import report as report_mod
+
+    fmt = (format or "html").lower()
+    if fmt in ("markdown",):
+        fmt = "md"
+    if fmt not in ("html", "md"):
+        raise HTTPException(400, "format 仅支持 html / md")
+    try:
+        p = report_mod.build_report(task_id, fmt)
+    except ValueError as exc:
+        t = tasks.get_task(task_id)
+        raise HTTPException(404 if t is None else 409, str(exc))
+    media = "text/html; charset=utf-8" if fmt == "html" else "text/markdown; charset=utf-8"
+    body = p.read_text(encoding="utf-8")
+    headers = {"Content-Disposition": f'inline; filename="{p.name}"'}
+    if fmt == "md":
+        headers["Content-Disposition"] = f'attachment; filename="{p.name}"'
+    return Response(content=body, media_type=media, headers=headers)
+
+
 @app.post("/api/v1/tasks/{task_id}/cancel")
 def api_cancel(task_id: str) -> Dict[str, Any]:
     ok = tasks.request_cancel(task_id)

@@ -78,6 +78,7 @@ build/
 
 # 本地调试截图 / Playwright 临时产物
 shot_*.png
+/*.png
 .playwright-mcp/
 
 # 操作系统

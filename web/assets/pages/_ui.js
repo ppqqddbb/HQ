@@ -80,16 +80,18 @@ export function form(fields) {
   return box;
 }
 
-/** 任务状态条（进度 + 阶段 + 取消） */
+/** 任务状态条（进度 + 阶段 + 取消 + 完成后导出报告） */
 export function statusBox(onCancel) {
   const bar = el("i", { style: { width: "0%" } });
   const txt = el("div", { style: { fontSize: "12px", color: "var(--txt2)" } }, "等待提交…");
   const btnCancel = el("button", { class: "btn ghost sm", style: { display: "none" } }, "取消");
+  const reportSlot = el("div", { style: { display: "none" } });
   const wrap = el("div", { class: "taskbar", style: { display: "none", marginBottom: "12px" } },
     el("span", { class: "pill acc" }, "任务"),
     el("div", { class: "grow" }, txt,
       el("div", { class: "progress", style: { marginTop: "5px" } }, bar)),
-    btnCancel);
+    btnCancel,
+    reportSlot);
   let currentTask = null;
   btnCancel.addEventListener("click", async () => {
     if (!currentTask) return;
@@ -108,8 +110,15 @@ export function statusBox(onCancel) {
     const running = t.status === "running" || t.status === "queued";
     btnCancel.style.display = running ? "" : "none";
     if (running) { btnCancel.disabled = false; btnCancel.textContent = "取消"; }
+    // 任务成功后提供报告导出（技术方案 11.4）；其他状态隐藏，避免导出空报告
+    const done = t.status === "succeeded";
+    reportSlot.style.display = done ? "" : "none";
+    if (done) {
+      reportSlot.innerHTML = "";
+      reportSlot.appendChild(reportButtons(t.task_id));
+    }
   };
-  wrap.hide = () => { wrap.style.display = "none"; currentTask = null; };
+  wrap.hide = () => { wrap.style.display = "none"; currentTask = null; reportSlot.style.display = "none"; };
   return wrap;
 }
 
@@ -118,6 +127,27 @@ export function errorCard(title, err) {
   return card(title, null,
     el("div", { class: "note", style: { borderColor: "rgba(248,113,113,.4)", color: "#fca5a5" } },
       String(err && err.message ? err.message : err)));
+}
+
+/** 报告导出按钮：HTML 直接新窗口打开（可打印成 PDF），Markdown 走下载。 */
+export function reportButtons(taskId, opts = {}) {
+  if (!taskId) return el("span", {});
+  const base = `/api/v1/tasks/${encodeURIComponent(taskId)}/report`;
+  const open = el("button", {
+    class: "btn sm",
+    title: "在新窗口打开自包含报告，可直接打印或另存为 PDF",
+    onclick: () => window.open(`${base}?format=html`, "_blank", "noopener"),
+  }, "导出报告 (HTML)");
+  const md = el("a", {
+    class: "btn sm",
+    href: `${base}?format=md`,
+    download: `report_${taskId}.md`,
+    title: "下载 Markdown 报告，便于归档到 Git 或知会文档",
+    style: { textDecoration: "none" },
+  }, "Markdown");
+  return el("div", { class: "toolbar", style: { marginBottom: "0", gap: "6px" } },
+    opts.label ? el("span", { style: { fontSize: "11.5px", color: "var(--txt3)" } }, opts.label) : null,
+    open, md);
 }
 
 /** 分析页通用的「首屏加载最近结果 + 重新运行」外壳 */
