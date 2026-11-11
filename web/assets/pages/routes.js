@@ -7,7 +7,14 @@ let map = null;
 let d = null;
 let layers = { heat: true, edges: true, route: true };
 
+/** 路由切换时释放地图资源 */
+export function destroy() {
+  if (map && map.destroy) { try { map.destroy(); } catch (e) { } }
+  map = null; d = null;
+}
+
 export async function render(view) {
+  destroy();
   const f = form([
     {
       key: "grid_mode", label: "网格方式", type: "select", value: "rows_cols", numeric: false,

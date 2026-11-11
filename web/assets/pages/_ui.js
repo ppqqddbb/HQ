@@ -135,3 +135,61 @@ export function analysisShell(view, opts) {
   view.appendChild(body);
   return { head, status, body };
 }
+
+/** 多选下拉（用 details/summary 实现，避免原生 multiple select 的交互问题） */
+export function typeMultiSelect(options, opts = {}) {
+  const chosen = new Set(opts.selected || []);
+  const summary = el("summary", {
+    style: { cursor: "pointer", padding: "6px 9px", fontSize: "12.5px" },
+  }, "全部船型");
+  const box = el("div", {
+    style: {
+      position: "absolute", zIndex: 30, background: "var(--panel2)",
+      border: "1px solid var(--line2)", borderRadius: "8px", padding: "6px",
+      marginTop: "4px", boxShadow: "0 10px 30px rgba(0,0,0,.45)",
+      maxHeight: "260px", overflowY: "auto", minWidth: "170px",
+    },
+  });
+  const node = el("details", { style: { position: "relative" } }, summary, box);
+
+  const refresh = () => {
+    if (!chosen.size) summary.textContent = "全部船型";
+    else if (chosen.size <= 2) summary.textContent = [...chosen].join("、");
+    else summary.textContent = `已选 ${chosen.size} 类船型`;
+  };
+
+  for (const o of options) {
+    const cb = el("input", { type: "checkbox" });
+    cb.checked = chosen.has(o);
+    cb.addEventListener("change", () => {
+      if (cb.checked) chosen.add(o); else chosen.delete(o);
+      refresh();
+    });
+    box.appendChild(el("label", {
+      style: {
+        display: "flex", gap: "7px", alignItems: "center", padding: "4px 6px",
+        fontSize: "12px", cursor: "pointer", borderRadius: "5px",
+      },
+    }, cb, o));
+  }
+  box.appendChild(el("div", { style: { borderTop: "1px solid var(--line)", marginTop: "5px", paddingTop: "5px", display: "flex", gap: "6px" } },
+    el("button", {
+      class: "btn sm", onclick: (e) => {
+        e.preventDefault(); chosen.clear(); refresh();
+        box.querySelectorAll("input").forEach(i => (i.checked = false));
+      },
+    }, "清空"),
+    el("button", {
+      class: "btn sm", onclick: (e) => {
+        e.preventDefault(); options.forEach(o => chosen.add(o)); refresh();
+        box.querySelectorAll("input").forEach(i => (i.checked = true));
+      },
+    }, "全选")));
+
+  document.addEventListener("click", (e) => {
+    if (!node.contains(e.target)) node.open = false;
+  });
+
+  refresh();
+  return { node, values: () => [...chosen] };
+}

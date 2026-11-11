@@ -153,15 +153,53 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
 
+_DB_CONN = None
+
+
+def _shared_db():
+    """进程内共享的元数据库实例。
+
+    DuckDB 同一文件在同一进程内只能打开一个 Database 实例；
+    重复 duckdb.connect(同路径) 会创建两个实例并互相锁冲突：
+    “另一个程序正在使用此文件”。这里全局复用同一实例，
+    每次操作再 cursor() 派生独立连接。
+    """
+    global _DB_CONN
+    with _LOCK:
+        if _DB_CONN is None:
+            config = {"temp_directory": str(settings.tmp_dir)}
+            _DB_CONN = duckdb.connect(str(settings.meta_db), config=config)
+    return _DB_CONN
+
+
 def connect(read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """打开元数据库连接并应用资源参数。"""
+    """派生一个元数据库连接（共享同一 Database 实例）并应用资源参数。
+
+    注意：同一 Database 实例上不要让多个线程同时执行语句。
+    写操作统一走 exec_sql / insert_df（持有全局锁），读操作走 q()。
+    """
     settings.ensure_dirs()
-    con = duckdb.connect(str(settings.meta_db), read_only=read_only)
+    con = _shared_db().cursor()
+    _apply_resources(con)
+    return con
+
+
+def connect_memory() -> duckdb.DuckDBPyConnection:
+    """独立内存 DuckDB 连接：只用于读 Parquet 数据集，不碰元数据库。
+
+    分析任务只需要建 clean_points 视图后读 Parquet，不需要元数据库；
+    这样可避免长任务与 API 请求争抢 meta.duckdb 的写锁。
+    """
+    con = duckdb.connect(database=":memory:")
+    _apply_resources(con)
+    return con
+
+
+def _apply_resources(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(f"SET memory_limit='{settings.duckdb_memory_limit}'")
     cores = os.cpu_count() or 4
     con.execute(f"SET threads={max(2, cores - 2)}")
     con.execute("SET temp_directory=?", [str(settings.tmp_dir)])
-    return con
 
 
 def init_meta() -> None:
@@ -181,7 +219,7 @@ def cursor(read_only: bool = False):
 
 
 def q(sql: str, params: Optional[Sequence[Any]] = None) -> pd.DataFrame:
-    with cursor() as con:
+    with _LOCK, cursor() as con:
         return con.execute(sql, list(params or [])).fetch_df()
 
 

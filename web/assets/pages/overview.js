@@ -1,6 +1,6 @@
 /* 总览工作台：数据规模、质量、时间分布、任务状态 */
 import { state } from "../state.js";
-import { listTasks, latestSucceeded } from "../taskrun.js";
+import { listTasks } from "../taskrun.js";
 import { statusTag, STATUS_CN } from "./_ui.js";
 
 export async function render(view) {
@@ -188,20 +188,30 @@ function quickAccess() {
     ["routes", "frequent_route", "频繁轨迹挖掘", "网格 / 转移 / 航线"],
     ["predict", "predict", "航迹预测", "CV / Kalman / GRU"],
   ];
-  const wrap = el("div", { class: "grid g3" },
-    ...defs.map(([page, algo, name, desc]) => {
-      const box = el("div", { class: "card", style: { cursor: "pointer" } },
-        el("h3", {}, el("span", {}, name), el("span", { class: "sub" }, desc)),
-        el("div", { class: "note" }, "载入最近一次成功结果…"));
-      box.addEventListener("click", () => { location.hash = "#/" + page; });
-      latestSucceeded(algo, state.dataset).then(t => {
-        box.querySelector(".note").textContent = t
-          ? `最近运行：${FMT.ts(t.created_at)} · 耗时 ${dur(t)}`
-          : "尚未运行，点击进入并发起分析";
-      }).catch(() => { });
-      return box;
-    }));
-  return card("分析结果直达", "点击卡片进入对应分析页（自动载入最近结果）", wrap);
+  const notes = [];
+  const wrap = el("div", { class: "grid g3" });
+  for (const [page, algo, name, desc] of defs) {
+    const note = el("div", { class: "note" }, "查询中…");
+    const box = el("div", { class: "card", style: { cursor: "pointer" } },
+      el("h3", {}, el("span", {}, name), el("span", { class: "sub" }, desc)), note);
+    box.addEventListener("click", () => { location.hash = "#/" + page; });
+    wrap.appendChild(box);
+    notes.push({ note, algo });
+  }
+  const holder = card("分析结果直达", "点击卡片进入对应分析页（自动载入最近结果）", wrap);
+  // 一次性拉取任务列表，避免每个卡片各发一次请求
+  listTasks(80).then(ts => {
+    for (const { note, algo } of notes) {
+      const t = ts.find(x => x.algorithm === algo && x.status === "succeeded" &&
+        (!state.dataset || x.dataset_version === state.dataset));
+      note.textContent = t
+        ? `最近运行：${FMT.ts(t.created_at)} · 耗时 ${dur(t)}`
+        : "尚未运行，点击进入并发起分析";
+    }
+  }).catch(() => {
+    for (const { note } of notes) note.textContent = "任务列表不可用";
+  });
+  return holder;
 }
 
 function dur(t) {

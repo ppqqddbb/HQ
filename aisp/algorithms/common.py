@@ -82,8 +82,8 @@ class Filter:
 
 
 def open_dataset(dataset_version: str) -> duckdb.DuckDBPyConnection:
-    store.init_meta()
-    con = store.connect()
+    """打开只读数据集连接（内存实例 + Parquet 视图，不占用元数据库写锁）。"""
+    con = store.connect_memory()
     store.register_costals(con, dataset_version)
     return con
 

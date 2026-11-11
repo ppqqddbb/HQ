@@ -1,21 +1,28 @@
 /* AIS 轨迹地图：视口内轨迹线 + 密度点 + 驻留点，支持点击查看单船轨迹 */
 import { state } from "../state.js";
-import { field } from "./_ui.js";
+import { field, typeMultiSelect } from "./_ui.js";
 
 let map = null;
 let layerState = { traj: true, heat: true, stay: false };
 
+/** 路由切换时释放地图资源 */
+export function destroy() {
+  if (map && map.destroy) { try { map.destroy(); } catch (e) { } }
+  map = null;
+}
+
 export async function render(view) {
+  destroy();
   const o = state.overview || {};
-  const bbox = o.bbox && o.bbox.length === 4 ? o.bbox : [7.5, 54.0, 13.5, 58.2];
+  const bbox = (o.bbox_robust && o.bbox_robust.length === 4) ? o.bbox_robust
+    : (o.bbox && o.bbox.length === 4 ? o.bbox : [7.5, 54.0, 13.5, 58.2]);
 
   /* 工具条 */
-  const shipTypes = (o.by_ship_type || []).map(d => d.name).filter(Boolean);
-  const typeSel = el("select", { multiple: true, size: 1, style: { minWidth: "150px", height: "30px" } },
-    ...shipTypes.map(t => el("option", { value: t }, t)));
+  const shipTypes = (o.by_ship_type || []).map(d => d.name).filter(t => t && t !== "未知");
+  const typeSel = typeMultiSelect(shipTypes);
   const t0In = el("input", { type: "datetime-local", style: { minWidth: "190px" } });
   const t1In = el("input", { type: "datetime-local", style: { minWidth: "190px" } });
-  const limitIn = el("input", { type: "number", value: 150, min: 10, max: 800, style: { minWidth: "80px" } });
+  const limitIn = el("input", { type: "number", value: 200, min: 10, max: 1000, style: { minWidth: "80px" } });
   const applyBtn = el("button", { class: "btn primary" }, "加载轨迹");
 
   /* 图层开关 */
@@ -24,7 +31,7 @@ export async function render(view) {
   const chkStay = el("input", { type: "checkbox" }); chkStay.checked = false;
 
   const toolbar = el("div", { class: "toolbar" },
-    el("div", { class: "field" }, el("label", {}, "船型筛选（可多选，Ctrl+点击）"), typeSel),
+    el("div", { class: "field" }, el("label", {}, "船型筛选"), typeSel.node),
     el("div", { class: "field" }, el("label", {}, "起始时间"), t0In),
     el("div", { class: "field" }, el("label", {}, "结束时间"), t1In),
     el("div", { class: "field" }, el("label", {}, "轨迹条数上限"), limitIn),
@@ -98,7 +105,7 @@ export async function render(view) {
 
   const filters = () => {
     const f = {};
-    const types = [...typeSel.selectedOptions].map(o2 => o2.value);
+    const types = typeSel.values();
     if (types.length) f.ship_types = types;
     if (t0In.value) f.t0 = t0In.value.replace("T", " ");
     if (t1In.value) f.t1 = t1In.value.replace("T", " ");

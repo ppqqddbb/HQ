@@ -32,12 +32,19 @@ def overview(dataset_version: Optional[str] = None) -> Dict[str, Any]:
                       count(DISTINCT traj_id) traj, round(avg(quality_score),1) q
                FROM clean_points"""
         ).fetchone()
+        # 稳健包络：极少数漂移点会拉大 min/max，地图取 0.1%~99.9% 分位作为默认视野
+        q = con.execute(
+            """SELECT quantile_cont(lon,0.001) a, quantile_cont(lat,0.001) b,
+                      quantile_cont(lon,0.999) c, quantile_cont(lat,0.999) d
+               FROM clean_points"""
+        ).fetchone()
         out.update(
             {
                 "n_points": int(row[0]),
                 "n_mmsi": int(row[1]),
                 "time_range": [str(row[2]), str(row[3])],
                 "bbox": [float(row[4]), float(row[5]), float(row[6]), float(row[7])],
+                "bbox_robust": [float(q[0]), float(q[1]), float(q[2]), float(q[3])] if q and q[0] is not None else None,
                 "n_trajectories": int(row[8]),
                 "avg_quality": float(row[9] or 0),
             }

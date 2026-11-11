@@ -149,19 +149,43 @@ class TileMap {
     this.tileOk = true;
     this._dragging = false;
     this._hoverPt = null;
+    this._pendingFit = opts.fitBBox || null;
+    this._fitted = false;
     this._bind();
+    // 容器尺寸可能在构造时尚未完成布局（width/height 为 0），
+    // 用 ResizeObserver 在拿到真实尺寸后再首次适配视野。
+    if (typeof ResizeObserver !== "undefined") {
+      this._ro = new ResizeObserver(() => this.resize());
+      this._ro.observe(this.el);
+    }
     this.resize();
-    if (opts.fitBBox) this.fitBBox(opts.fitBBox);
   }
 
   resize() {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const r = this.el.getBoundingClientRect();
-    this.w = r.width; this.h = r.height;
-    this.canvas.width = Math.max(1, Math.floor(r.width * dpr));
-    this.canvas.height = Math.max(1, Math.floor(r.height * dpr));
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+    const sizeChanged = w !== this.w || h !== this.h;
+    const bmpW = Math.max(1, Math.floor(w * dpr)), bmpH = Math.max(1, Math.floor(h * dpr));
+    this.w = w; this.h = h;
+    // 注意：即使尺寸相同，给 canvas.width 赋值也会清空位图，
+    // 所以只在尺寸真正变化时改位图尺寸，并立即重绘。
+    if (this.canvas.width !== bmpW || this.canvas.height !== bmpH) {
+      this.canvas.width = bmpW;
+      this.canvas.height = bmpH;
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    if (!this._fitted && this._pendingFit && w > 20 && h > 20) {
+      this._fitted = true;
+      this.fitBBox(this._pendingFit);
+      return;
+    }
+    // 尺寸未变时也需要重绘（位图可能刚被重置）
     this.draw();
+  }
+
+  destroy() {
+    if (this._ro) { try { this._ro.disconnect(); } catch (e) { } }
   }
 
   _bind() {
@@ -226,17 +250,19 @@ class TileMap {
 
   fitBBox(bbox, pad = 30) {
     if (!bbox || bbox.length !== 4) return;
+    if (!(this.w > 20 && this.h > 20)) { this._pendingFit = bbox; this._fitted = false; return; }
     const [x0, y0, x1, y1] = bbox;
     this.center = [(x0 + x1) / 2, (y0 + y1) / 2];
     // 二分查找合适缩放
     let lo = 0.3, hi = 12;
-    for (let i = 0; i < 22; i++) {
+    for (let i = 0; i < 24; i++) {
       this.zoom = (lo + hi) / 2;
       const a = this.toScreen(x0, y1), b = this.toScreen(x1, y0);
       const w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
       if (w > this.w - pad * 2 || h > this.h - pad * 2) hi = this.zoom; else lo = this.zoom;
     }
     this.zoom = lo;
+    this._fitted = true;
     this.draw();
   }
 

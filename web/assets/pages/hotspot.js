@@ -13,7 +13,14 @@ let map = null;
 let clusters = [];
 let result = null;
 
+/** 路由切换时由 app.js 调用，释放 ResizeObserver 与 DOM 引用 */
+export function destroy() {
+  if (map && map.destroy) { try { map.destroy(); } catch (e) { } }
+  map = null; clusters = []; result = null;
+}
+
 export async function render(view) {
+  destroy();
   const f = form([
     { key: "min_cluster_size", label: "最小簇规模", type: "number", value: DEFAULTS.min_cluster_size, min: 5, step: 5, hint: "HDBSCAN min_cluster_size" },
     { key: "min_samples", label: "核心点邻域", type: "number", value: DEFAULTS.min_samples, min: 1, step: 1, hint: "越大簇越保守" },
@@ -76,7 +83,7 @@ export async function render(view) {
       kpi("噪声占比", FMT.pct(res.noise_ratio || 0), "未归入任何簇的点"),
       kpi("参与聚类点数", FMT.num((res.sampling || {}).n_used || 0),
         `抽样前 ${FMT.big((res.sampling || {}).n_before_sampling || 0)}`),
-      kpi("覆盖范围", fmtExtent(res.extent), "聚类点位经纬度包络")));
+      kpi("覆盖范围", fmtExtent(res.extent_robust || res.extent), "聚类点位经纬度包络")));
 
     if (res.sampling) {
       sumBox.appendChild(el("div", { class: "note", style: { marginBottom: "14px" } },
@@ -107,32 +114,50 @@ export async function render(view) {
         lon: c.center_lon, lat: c.center_lat, text: "#" + c.cluster_id,
       }))));
     }
-    ensureMap().fitBBox(res.extent || [7, 54, 13, 58]);
+    ensureMap().fitBBox(res.extent_robust || res.extent || [7, 54, 13, 58]);
     ensureMap().setLayers(layers);
     mapHud.textContent = `${res.n_clusters} 个簇 · 噪声 ${((res.noise_ratio || 0) * 100).toFixed(1)}%`;
 
     /* 簇表格 */
     tableCard.style.display = "";
     tableBox.innerHTML = "";
-    const rows = clusters.slice(0, 200);
-    tableBox.appendChild(table([
-      { label: "排名", num: true, render: r => "#" + r.rank },
-      { label: "簇 ID", key: "cluster_id" },
-      { label: "类型", render: r => el("span", { class: "tag " + (r.hotspot_kind === "停留热点" ? "warn" : "acc") }, r.hotspot_kind || "—") },
-      { label: "点数", num: true, render: r => FMT.num(r.point_count) },
-      { label: "船舶数", num: true, render: r => FMT.num(r.distinct_mmsi) },
-      { label: "航次", num: true, render: r => FMT.num(r.distinct_traj) },
-      { label: "中心", render: r => `${(r.center_lon ?? 0).toFixed(3)}, ${(r.center_lat ?? 0).toFixed(3)}` },
-      { label: "面积", num: true, render: r => (r.area_km2 ?? 0).toFixed(1) + " km²" },
-      { label: "均速", num: true, render: r => (r.avg_sog ?? 0).toFixed(1) + " kn" },
-      { label: "驻留占比", num: true, render: r => FMT.pct(r.dwell_ratio || 0) },
-      { label: "主航向", num: true, render: r => (r.main_cog_deg ?? 0).toFixed(0) + "°" },
-      {
-        label: "操作", render: r => el("button", {
-          class: "btn sm", onclick: () => zoomCluster(r),
-        }, "定位"),
-      },
-    ], rows, { tall: true }));
+    const onlySig = el("input", { type: "checkbox" });
+    onlySig.checked = false;
+    const rowsHost = el("div", {});
+    tableBox.appendChild(el("div", { class: "toolbar", style: { marginBottom: "8px" } },
+      el("div", { class: "field" }, el("label", {}, "仅看主要热点（船舶数达标）"), onlySig),
+      el("span", { style: { fontSize: "11.5px", color: "var(--txt3)" } },
+        `共 ${FMT.num(res.n_clusters)} 簇，其中主要热点 ${FMT.num(res.n_significant_clusters ?? 0)} 个；` +
+        `当前列表显示前 ${FMT.num((res.clusters || []).length)} 条`)));
+    tableBox.appendChild(rowsHost);
+
+    const drawRows = () => {
+      rowsHost.innerHTML = "";
+      const src = onlySig.checked
+        ? clusters.filter(c => c.significant)
+        : clusters;
+      if (!src.length) { rowsHost.appendChild(empty("当前筛选下无热点")); return; }
+      rowsHost.appendChild(table([
+        { label: "排名", num: true, render: r => "#" + r.rank },
+        { label: "簇 ID", key: "cluster_id" },
+        { label: "类型", render: r => el("span", { class: "tag " + (r.hotspot_kind && r.hotspot_kind.startsWith("停留") ? "warn" : "acc") }, r.hotspot_kind || "—") },
+        { label: "点数", num: true, render: r => FMT.num(r.point_count) },
+        { label: "船舶数", num: true, render: r => FMT.num(r.distinct_mmsi) },
+        { label: "航次", num: true, render: r => FMT.num(r.distinct_traj) },
+        { label: "中心", render: r => `${(r.center_lon ?? 0).toFixed(3)}, ${(r.center_lat ?? 0).toFixed(3)}` },
+        { label: "面积", num: true, render: r => (r.area_km2 ?? 0).toFixed(1) + " km²" },
+        { label: "均速", num: true, render: r => (r.avg_sog === null || r.avg_sog === undefined ? "—" : r.avg_sog.toFixed(1) + " kn") },
+        { label: "驻留占比", num: true, render: r => FMT.pct(r.dwell_ratio || 0) },
+        { label: "主航向", num: true, render: r => (r.main_cog_deg === null || r.main_cog_deg === undefined ? "—" : r.main_cog_deg.toFixed(0) + "°") },
+        {
+          label: "操作", render: r => el("button", {
+            class: "btn sm", onclick: () => zoomCluster(r),
+          }, "定位"),
+        },
+      ], src.slice(0, 300), { tall: true }));
+    };
+    onlySig.addEventListener("change", drawRows);
+    drawRows();
 
     /* 敏感性 */
     const sens = res.sensitivity || {};

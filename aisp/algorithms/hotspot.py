@@ -79,6 +79,13 @@ def run(
         if extent is None:
             return {"error": "筛选条件下没有数据"}
         min_lon, min_lat, max_lon, max_lat = extent
+        # 极少数漂移点会拉大包络，地图与 KPI 使用 0.1%~99.9% 分位的稳健范围
+        rb = con.execute(
+            f"""SELECT quantile_cont(lon,0.001), quantile_cont(lat,0.001),
+                       quantile_cont(lon,0.999), quantile_cont(lat,0.999)
+                FROM clean_points WHERE {flt.where()}"""
+        ).fetchone()
+        extent_robust = [float(rb[0]), float(rb[1]), float(rb[2]), float(rb[3])] if rb and rb[0] is not None else list(extent)
 
         min_cluster_size = int(params.get("min_cluster_size", 60))
         min_samples = int(params.get("min_samples", 12))
@@ -155,10 +162,13 @@ def run(
         # ---- 4. 每个簇的统计与几何 ----
         _p(progress, 0.7, "计算簇统计、边界与强度序列")
         clusters = _cluster_stats(sample, min_vessels=int(params.get("min_vessels", 8)))
-        clusters.sort(key=lambda c: c["point_count"], reverse=True)
+        # 排序：主要热点（船数达标）优先，其次按点数；保证 TOP 列表是业务关注的对象
+        clusters.sort(key=lambda c: (not c["significant"], -c["point_count"]))
         for rank, c in enumerate(clusters, 1):
             c["rank"] = rank
         top = clusters[:top_n]
+        # 控制 summary 体积：仅输出前 600 簇（完整结果在 parquet 中）
+        clusters_out = clusters[:600]
         cluster_df = pd.DataFrame([{k: v for k, v in c.items() if k != "hull"} for c in clusters])
 
         # 时间强度序列（按小时）
@@ -202,6 +212,7 @@ def run(
             "filters": flt.to_dict(),
             "params": params,
             "extent": [min_lon, min_lat, max_lon, max_lat],
+            "extent_robust": extent_robust,
             "sampling": {
                 "time_slot_minutes": slot_min,
                 "method": "每 MMSI 每个时间槽保留 1 点（抑制上报频率偏差）",
@@ -214,7 +225,8 @@ def run(
             "n_clusters": n_clusters,
             "n_significant_clusters": int(sum(1 for c in clusters if c.get("significant"))),
             "noise_ratio": round(noise_ratio, 4),
-            "clusters": clusters,
+            "clusters": clusters_out,
+            "n_clusters_returned": len(clusters_out),
             "sensitivity": sensitivity,
             "time_series": ts_series,
             "heat_grid": grid.to_dict(orient="records"),

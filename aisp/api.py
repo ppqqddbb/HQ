@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -369,20 +369,38 @@ def api_health() -> Dict[str, Any]:
 
 # --------------------------------------------------------------------------- 静态前端
 
+class _NoCacheStatic(StaticFiles):
+    """开发期静态资源：禁用浏览器缓存，避免前端修改后看到旧版本。"""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
+
+
 def _mount_static() -> None:
     web = settings.web_dir
-    if web.is_dir():
-        if (web / "vendor").is_dir():
-            app.mount("/vendor", StaticFiles(directory=str(web / "vendor")), name="vendor")
-        if (web / "assets").is_dir():
-            app.mount("/assets", StaticFiles(directory=str(web / "assets")), name="assets")
+    if not web.is_dir():
+        return
+    if (web / "vendor").is_dir():
+        app.mount("/vendor", _NoCacheStatic(directory=str(web / "vendor")), name="vendor")
+    if (web / "assets").is_dir():
+        app.mount("/assets", _NoCacheStatic(directory=str(web / "assets")), name="assets")
 
-        @app.get("/", response_class=HTMLResponse)
-        def index() -> HTMLResponse:
-            idx = web / "index.html"
-            if not idx.is_file():
-                raise HTTPException(404, "前端未构建")
-            return HTMLResponse(idx.read_text(encoding="utf-8"))
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> HTMLResponse:
+        idx = web / "index.html"
+        if not idx.is_file():
+            raise HTTPException(404, "前端未构建")
+        return HTMLResponse(idx.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+
+    @app.get("/favicon.ico")
+    def favicon():
+        p = web / "favicon.svg"
+        if p.is_file():
+            return FileResponse(str(p), media_type="image/svg+xml")
+        return Response(status_code=204)
 
 
 def _seed_demo_if_needed() -> None:

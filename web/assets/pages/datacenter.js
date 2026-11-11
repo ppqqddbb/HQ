@@ -251,8 +251,13 @@ function renderQuality(box, q, dv) {
 
   const fc = q.flag_counts || {};
   const errFlags = q.error_flags || [], infoFlags = q.info_flags || [];
+  const flagCN = {
+    INVALID_TIME: "时间无效", TIME_CONFLICT: "时间冲突", SPEED_SPIKE: "航速突变",
+    JUMP: "位置跳变", GPS_DRIFT: "GPS 漂移", INVALID_COG: "航向无效",
+    STATIONARY_NOISE: "静止噪声", LOW_SPEED_COG_UNRELIABLE: "低速航向不可靠",
+  };
   const items = Object.entries(fc).map(([k, v]) => ({
-    label: k + (errFlags.includes(k) ? "（错误）" : infoFlags.includes(k) ? "（提示）" : ""),
+    label: (flagCN[k] || k) + (errFlags.includes(k) ? "（错误）" : ""),
     value: v,
     color: errFlags.includes(k)
       ? "linear-gradient(90deg,#f87171,#fca5a5)"

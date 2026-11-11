@@ -55,7 +55,10 @@ function chartBar(dom, labels, values, opts = {}) {
             { offset: 0, color: opts.color || "#38bdf8" }, { offset: 1, color: opts.color2 || "rgba(56,189,248,.18)" }])
           : (opts.color || "#38bdf8"),
       },
-      label: opts.showLabel ? { show: true, position: "top", color: "#9db0c9", fontSize: 10, formatter: opts.labelFmt } : undefined,
+      label: opts.showLabel ? {
+        show: true, position: "top", color: "#9db0c9", fontSize: 10,
+        formatter: p => (opts.labelFmt ? opts.labelFmt(p.value) : String(p.value)),
+      } : undefined,
     }],
   }, opts);
 }

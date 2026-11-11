@@ -357,22 +357,28 @@ def _ts(s: str) -> float:
 
 
 def _nanabsdiff(a: pd.Series, b: pd.Series) -> float:
-    """忽略 NaN 的均值绝对差。"""
+    """忽略 NaN 的均值绝对差。
+
+    两条轨迹的重采样时间戳可能不完全对齐（长度不同），
+    因此不能用逐点 mask 相减，而是分别求各自的有效均值再作差。
+    """
     x, y = a.to_numpy(dtype=float), b.to_numpy(dtype=float)
-    m = np.isfinite(x) & np.isfinite(y)
-    if m.sum() < 3:
+    x = x[np.isfinite(x)]
+    y = y[np.isfinite(y)]
+    if x.size < 2 or y.size < 2:
         return float("nan")
-    return float(abs(x[m].mean() - y[m].mean()))
+    return float(abs(x.mean() - y.mean()))
 
 
 def _nancircdiff(a: pd.Series, b: pd.Series) -> float:
     """忽略 NaN 的圆均值角度差（degree）。"""
     x, y = a.to_numpy(dtype=float), b.to_numpy(dtype=float)
-    m = np.isfinite(x) & np.isfinite(y)
-    if m.sum() < 3:
+    x = x[np.isfinite(x)]
+    y = y[np.isfinite(y)]
+    if x.size < 2 or y.size < 2:
         return float("nan")
-    ax = math.degrees(math.atan2(np.sin(np.radians(x[m])).mean(), np.cos(np.radians(x[m])).mean()))
-    bx = math.degrees(math.atan2(np.sin(np.radians(y[m])).mean(), np.cos(np.radians(y[m])).mean()))
+    ax = math.degrees(math.atan2(np.sin(np.radians(x)).mean(), np.cos(np.radians(x)).mean()))
+    bx = math.degrees(math.atan2(np.sin(np.radians(y)).mean(), np.cos(np.radians(y)).mean()))
     return float(abs(wrap_deg(ax - bx)))
 
 
