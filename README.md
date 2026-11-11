@@ -52,7 +52,7 @@
                     │ tasks.py   队列 + 进度 + SSE + 审计          │
                     │ store.py   进程内共享 DuckDB + 元数据库      │
                     └──────────────────┬──────────────────────────┘
-                                       ▼  FastAPI (api.py, 31 个路径 / 38 个端点)
+                                       ▼  FastAPI (api.py, 40 个路径 / 42 个端点)
                     ┌─────────────────────────────────────────────┐
                     │ web/  11 个页面（原生 ESM + ECharts + Canvas）│
                     └─────────────────────────────────────────────┘
@@ -85,7 +85,7 @@ HQ/
 │   ├── backup.py             # DuckDB 导出式备份与恢复
 │   ├── modelmon.py           # 模型卡、PSI 漂移、回填误差监控
 │   ├── report.py             # 自包含 HTML / Markdown 报告生成
-│   ├── api.py                # FastAPI 应用（31 个路径 / 38 个端点）
+│   ├── api.py                # FastAPI 应用（40 个路径 / 42 个端点）
 │   ├── cli.py                # 命令行入口（import/clean/run/backup/restore）
 │   └── algorithms/           # 六类分析算法
 │       ├── common.py         # 统一过滤条件（矩形/多边形/圆形）与结果写盘
@@ -237,7 +237,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ---
 
-## 7. API 清单（33 个路径 / 44 个端点）
+## 7. API 清单（40 个路径 / 42 个端点）
 
 统一响应结构：成功 `{request_id, ok: true, data}`，失败 `{request_id, ok: false, error: {code, message}}`。
 
@@ -296,6 +296,12 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | GET | `/api/v1/admin/meta` | 数据字典与字段映射 |
 | GET | `/api/v1/admin/audit` | 审计日志 |
 | GET | `/api/v1/admin/config` | 运行时配置（已脱敏） |
+| GET | `/api/v1/admin/roles` | 角色与权限点映射 |
+| GET | `/api/v1/admin/users` | 用户列表（只返回令牌指纹，不返回明文） |
+| POST | `/api/v1/admin/users` | 新增用户（可选指定角色，返回一次性令牌） |
+| PATCH | `/api/v1/admin/users/{user_id}` | 修改角色 / 启用停用 |
+| POST | `/api/v1/admin/users/{user_id}/token` | 重置令牌（旧令牌立即失效） |
+| DELETE | `/api/v1/admin/users/{user_id}` | 删除用户（内置 `system` 不可删） |
 | POST | `/api/v1/admin/backup` | 创建备份（导出式 zip） |
 | GET | `/api/v1/admin/backups` | 备份列表 |
 | GET | `/api/v1/admin/backups/{name}` | 下载备份 |
@@ -359,6 +365,22 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 段内 `max(sog) ≥ 2 kn`、连续点数 ≥ 20 且持续 ≥ 15 分钟即整段标记。
 **真实锚泊/靠泊（SOG≈0）不会被误判**——实测 48 小时不动、8641 点的泊位样本 0 误报。
 阈值可配：`frozen_gps_sog_kn` / `frozen_gps_min_points` / `frozen_gps_min_minutes`。
+
+### 8.4 2025-01-02 各算法结果（`clean_v1_d0102`）
+
+| 算法 | 关键结果 |
+|---|---|
+| 热点区域 | 1,747 簇（显著 117），噪声 12.0%，参与 300,000 点（每 MMSI 每 5 分钟抽 1 点，源 808.3 万 → 52.3 万 → 取 30 万） |
+| 船舶画像 | 2,460 艘；总航程 140,297 km；驻留事件 5,506 次 |
+| 属性关联 | 2,232 独立样本，45 组检验 BH 校正后全部显著，最强 \|r\|=0.944（平均航速 vs 最大航速） |
+| 船舶编群 | 120 序列 / 695 候选对（实算 625）/ 识别 1 群，DTW 耗时 4.0 s |
+| 频繁轨迹 | 10×10 网格，1,566 航次单位、77 个观测格、170 条有向转移边、17 条频繁航线 |
+| 航迹预测 | 28,809 窗口；截尾 ADE：CV 1,867 m / Kalman 1,942 m / **GRU 347 m**（改善 81.4%） |
+
+编群只识别出 1 群（`219000897` + `219004203`，均为 Fishing，24 h 全窗重叠、最大间距 92 m、
+航向差 16°、组内最大 DTW 0.289）是符合预期的：编群要求同时满足时间重叠、空间接近、
+航速相近、航向一致与 DTW 阈值，单日单区域数据里没有第二对同时达标。
+例如 DTW 最小的候选对（`219001343` + `219012521`，DTW 0.149）因为航向差 85° 而被正确排除。
 
 ---
 
