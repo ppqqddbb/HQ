@@ -144,7 +144,8 @@ export async function render(view) {
       for (const r of sh) map[r.k] = (map[r.k] || 0) + r.n;
       const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
       chartBar(spd, ks.map(k => k + " kn"), ks.map(k => map[k]),
-        { yName: "点数", rotate: true, labelFmt: x => FMT.big(x) });
+        // 静止船 0 kn 占比接近 74%~90%，线性轴会把其余分箱压成零高，用对数轴
+        { yName: "点数（对数）", rotate: true, labelFmt: x => FMT.big(x), yOpt: { type: "log" } });
     } else spd.appendChild(empty(v.median_sog === null || v.median_sog === undefined
       ? "该目标无有效 SOG（基站 / 助航设备等发送 AIS 的固定站台）" : "无速度分布数据"));
 
