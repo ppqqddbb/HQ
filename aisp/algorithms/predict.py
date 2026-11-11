@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -29,6 +30,21 @@ EARTH_R = 6371008.8
 def _p(cb: ProgressCb, v: float, s: str) -> None:
     if cb:
         cb(v, s)
+
+
+def _hist_pack(v: "pd.Series", bins: int = 20) -> List[Dict[str, float]]:
+    """把一列数值压成等宽直方图，用于模型卡里的输入分布快照。"""
+    if len(v) == 0:
+        return []
+    lo, hi = float(v.min()), float(v.max())
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        return []
+    if hi <= lo:
+        hi = lo + 1.0
+    edges = np.linspace(lo, hi, bins + 1)
+    cnt, _ = np.histogram(v.to_numpy(dtype=float), bins=edges)
+    return [{"x0": round(float(edges[i]), 4), "x1": round(float(edges[i + 1]), 4),
+             "n": int(cnt[i])} for i in range(bins)]
 
 
 # --------------------------------------------------------------------------- 基线模型
@@ -269,6 +285,37 @@ def run(
                 WHERE traj_id IN ({lst}) AND coalesce(quality_flags,'') NOT LIKE '%JUMP%'
                 ORDER BY traj_id, event_time"""
         ).fetchdf()
+
+        # 模型卡需要「训练数据实际覆盖的时间 / 区域」，因此记录抽样后的真实范围；
+        # 注意不要直接用 dataset_version 的全量范围——预测只用了前 max_traj 条轨迹。
+        data_range = {
+            "time_range": [str(df["event_time"].min()), str(df["event_time"].max())],
+            "bbox": [float(df["lon"].min()), float(df["lat"].min()),
+                     float(df["lon"].max()), float(df["lat"].max())],
+            "n_trajectories_used": int(df["traj_id"].nunique()),
+            "n_points_used": int(len(df)),
+        }
+
+        # 漂移检测的参照分布：从抽样轨迹的原始报文里取样（步长 1/10，控制开销）
+        raw_ref = con.execute(
+            f"""SELECT sog, cog, rot, heading,
+                       date_diff('second', lag(event_time) OVER (PARTITION BY traj_id ORDER BY event_time),
+                                 event_time) AS report_gap_s
+                FROM clean_points WHERE traj_id IN ({lst})
+                ORDER BY traj_id, event_time"""
+        ).fetchdf()
+        if len(raw_ref) > 20000:
+            raw_ref = raw_ref.iloc[:: max(1, len(raw_ref) // 20000)].reset_index(drop=True)
+        ref_dist = {}
+        for c in ("sog", "cog", "rot", "heading", "report_gap_s"):
+            if c in raw_ref.columns:
+                v = pd.to_numeric(raw_ref[c], errors="coerce").dropna()
+                ref_dist[c] = {
+                    "n": int(len(v)),
+                    "q": [round(float(x), 4) for x in np.quantile(v, [0.05, 0.25, 0.5, 0.75, 0.95])]
+                    if len(v) else [],
+                    "hist": _hist_pack(v),
+                }
 
         _p(progress, 0.2, "重采样到统一时间栅格并构建滑窗样本")
         frames = _resample_segments(df, step_s, input_steps + horizon_steps + 2)
@@ -578,6 +625,8 @@ def run(
             "stratified": stratified,
             "verdict": verdict,
             "gru": gru_info,
+            "data_range": data_range,
+            "reference_distribution": ref_dist,
             "samples": samples,
             "split": {
                 "method": "时间外推（按窗口起点时间排序，前 70% 训练、后 30% 测试）",
@@ -592,7 +641,29 @@ def run(
                 "预测用于态势研判与辅助分析，不作为航行安全、避碰或执法的唯一依据。",
             ],
         }
+
+        # 先建模型卡（技术方案 10.10），再一起落盘，保证 summary.json 里
+        # 能找到 model_card 引用；出错时只记错误，不影响任务结果。
+        card = None
+        try:
+            from .. import modelmon
+
+            card = modelmon.build_model_card(task_id, summary, owner=params.get("owner", "system"))
+            summary["model_card"] = {"model_id": card["model_id"], "created_at": card["created_at"]}
+        except Exception as exc:  # pragma: no cover - 模型卡失败不阻断任务
+            summary["model_card"] = {"error": str(exc)}
+
+        # write_result 会创建 results/<task_id>/ 目录
         write_result(task_id, jsonable(summary))
+
+        # 再把模型卡副本放到结果目录，便于随报告/文件列表一起下载
+        if card is not None:
+            try:
+                (settings.results_root / task_id / "model_card.json").write_text(
+                    json.dumps(card, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            except Exception:  # pragma: no cover
+                pass
+
         _p(progress, 1.0, "完成：" + "，".join(f"{k} ADE={v['trimmed_ADE_m']}m" for k, v in metrics.items()))
         return jsonable(summary)
     finally:

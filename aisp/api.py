@@ -527,6 +527,118 @@ def api_config() -> Dict[str, Any]:
     return pack({"settings": settings.as_dict(), "defaults": DEFAULT_PARAMS})
 
 
+# --------------------------------------------------------- 模型监控（10.10）
+
+@app.get("/api/v1/models")
+def api_models() -> Dict[str, Any]:
+    """已登记模型卡列表（含最新漂移结论）。"""
+    from . import modelmon
+
+    return pack(modelmon.list_models())
+
+
+@app.get("/api/v1/models/{model_id}")
+def api_model_detail(model_id: str) -> Dict[str, Any]:
+    """模型卡 + 监控日志 + 回填误差趋势。"""
+    from . import modelmon
+
+    d = modelmon.model_detail(model_id)
+    if d is None:
+        raise HTTPException(404, f"模型 {model_id} 不存在或未生成模型卡")
+    return pack(d)
+
+
+class DriftRequest(BaseModel):
+    """漂移检测：拿参照分布（训练期）与新数据对比。"""
+
+    dataset_version: str
+    reference_dataset: Optional[str] = None
+    features: Optional[List[str]] = None
+    sample: int = Field(20000, ge=500, le=200000)
+
+
+@app.post("/api/v1/models/{model_id}/drift")
+def api_model_drift(model_id: str, req: DriftRequest) -> Dict[str, Any]:
+    """用 PSI 对比参照数据集与新数据集的输入分布（技术方案 10.10）。"""
+    from . import modelmon
+
+    d = modelmon.model_detail(model_id)
+    if d is None:
+        raise HTTPException(404, f"模型 {model_id} 不存在或未生成模型卡")
+    _require_dataset(req.dataset_version)
+    ref_dv = req.reference_dataset or (d["card"].get("training_data") or {}).get("dataset_version")
+    if not ref_dv:
+        raise HTTPException(400, "缺少参照数据集，请在请求中指定 reference_dataset")
+    _require_dataset(ref_dv)
+
+    feats = req.features or (d["card"].get("monitoring") or {}).get("watch_features") \
+        or modelmon.DEFAULT_WATCH_FEATURES
+    try:
+        ref_df = dataservice.sample_features(ref_dv, feats, req.sample)
+        cur_df = dataservice.sample_features(req.dataset_version, feats, req.sample)
+    except Exception as exc:
+        raise HTTPException(400, f"读取样本失败：{exc}")
+
+    rows = modelmon.distribution_shift(ref_df, cur_df, feats)
+    verdict = modelmon.drift_verdict(rows)
+    # 参照与当前是同一版本时 PSI 必为 0，这种“自比”只能验证流程通，不能作为上线依据，
+    # 需要显式告知使用者，否则会被误读成“分布完全稳定”。
+    same = ref_dv == req.dataset_version
+    if same:
+        verdict = dict(verdict)
+        verdict["message"] = (
+            f"参照与当前均为 {ref_dv}（自比），PSI 必然为 0，仅供验证监控链路；"
+            "请指定 reference_dataset 为训练期数据集、current 为新数据后再判定"
+        )
+        verdict["self_compare"] = True
+    modelmon.record_monitor_point(model_id, drift=rows, verdict=verdict, note="手动漂移检测")
+    store.audit("model_drift_check", f"model:{model_id}",
+                f"ref={ref_dv} cur={req.dataset_version} action={verdict['action']}")
+    return pack({"model_id": model_id, "reference_dataset": ref_dv,
+                 "current_dataset": req.dataset_version, "self_compare": same,
+                 "features": rows, "verdict": verdict})
+
+
+class MonitorPointRequest(BaseModel):
+    """手工登记一条监控点（推理延迟 / 回填误差 / 覆盖率）。"""
+
+    n_predictions: int = 0
+    n_backfilled: int = 0
+    latency_ms: Optional[float] = None
+    backfill_ade_m: Optional[float] = None
+    missing_rate: Optional[float] = None
+    note: str = ""
+    # 补录历史监控点时指定上报时间；留空则用当前时间。
+    # 不回填时间会让趋势图把所有点挤在同一时刻，无法看变化。
+    ts: Optional[str] = None
+
+
+@app.post("/api/v1/models/{model_id}/monitor")
+def api_model_monitor(model_id: str, req: MonitorPointRequest) -> Dict[str, Any]:
+    """追加一条监控点，并返回更新后的误差趋势。"""
+    from . import modelmon
+
+    d = modelmon.model_detail(model_id)
+    if d is None:
+        raise HTTPException(404, f"模型 {model_id} 不存在或未生成模型卡")
+    try:
+        pt = modelmon.record_monitor_point(
+            model_id,
+            n_predictions=req.n_predictions,
+            n_backfilled=req.n_backfilled,
+            latency_ms=req.latency_ms,
+            backfill_ade_m=req.backfill_ade_m,
+            missing_rate=req.missing_rate,
+            note=req.note,
+            ts=req.ts,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    log = modelmon.load_monitor_log(model_id)
+    base = ((d["card"].get("evaluation") or {}).get("gru") or {}).get("trimmed_ADE_m")
+    return pack({"point": pt, "error_trend": modelmon.error_trend(log, base)})
+
+
 @app.get("/api/v1/whoami")
 def api_whoami(request: Request) -> Dict[str, Any]:
     """当前请求的身份与权限集（前端据此隐藏无权操作的按钮）。"""

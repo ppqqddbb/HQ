@@ -325,3 +325,33 @@ def test_map_points_accepts_polygon_and_circle_together(client):
     })
     assert r.status_code == 404
     assert r.json()["error"]["code"] == 404
+
+
+# ------------------------------------------------- 10.10 模型监控（API 契约）
+
+def test_models_list_returns_empty_or_records(client):
+    """模型列表接口必须返回数组（无模型时为空数组，而不是 404/500）。"""
+    r = client.get("/api/v1/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert isinstance(body["data"], list)
+
+
+def test_unknown_model_returns_404(client):
+    r = client.get("/api/v1/models/no_such_model_xyz")
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == 404
+
+
+def test_model_drift_rejects_unknown_dataset(client):
+    """漂移检测对不存在的数据集应返回 404（模型先查、数据集后查）。"""
+    r = client.post("/api/v1/models/no_such_model_xyz/drift",
+                    json={"dataset_version": "clean_not_exists"})
+    assert r.status_code == 404
+
+
+def test_model_drift_validates_sample_bounds(client):
+    r = client.post("/api/v1/models/any/drift",
+                    json={"dataset_version": "x", "sample": 10})
+    assert r.status_code == 422, "sample 小于下限应由 pydantic 拦下"

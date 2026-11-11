@@ -90,7 +90,13 @@ select:focus,input:focus,textarea:focus{border-color:var(--acc)}
 .kpi .k-label{font-size:11.5px;color:var(--txt2);letter-spacing:.4px}
 .kpi .k-value{font-size:25px;font-weight:700;letter-spacing:-.5px;margin-top:4px;
   background:linear-gradient(120deg,#e8f4ff,#7dd3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
-.kpi .k-sub{font-size:11px;color:var(--txt3);margin-top:2px}
+.kpi .k-sub{font-size:11px;color:var(--txt3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 模型 ID 这类长文本：缩小字号并允许换行，避免冲出卡片。
+   注意用 overflow-wrap:anywhere 而不是 word-break:break-all，
+   后者会无视分隔符强行在数字中间断开；配合 kpi() 插入的零宽空格，
+   换行优先发生在 _ / - 处，只有单个词太长时才任意断。 */
+.kpi .k-value.sm{font-size:15px;letter-spacing:0;line-height:1.35;
+  white-space:normal;overflow-wrap:anywhere;word-break:normal}
 .kpi::after{content:"";position:absolute;right:-30px;top:-30px;width:90px;height:90px;border-radius:50%;
   background:radial-gradient(circle,rgba(56,189,248,.18),transparent 70%)}
 

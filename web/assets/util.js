@@ -233,10 +233,14 @@ function card(title, sub, ...body) {
 }
 
 function kpi(label, value, sub) {
+  // 长值（如模型 ID）自动缩小字号，避免冲出卡片；并在下划线/短横处插入零宽空格，
+  // 让长标识符换行发生在分隔符处，而不是把时间戳数字从中间劈开。
+  const isLong = typeof value === "string" && value.length > 18;
+  const text = isLong ? value.replace(/([_-])/g, "$1\u200B") : value;
   return el("div", { class: "card kpi" },
     el("div", { class: "k-label" }, label),
-    el("div", { class: "k-value" }, value),
-    sub ? el("div", { class: "k-sub" }, sub) : null);
+    el("div", { class: "k-value" + (isLong ? " sm" : ""), title: isLong ? value : null }, text),
+    sub ? el("div", { class: "k-sub", title: String(sub) }, sub) : null);
 }
 
 function table(cols, rows, opts = {}) {

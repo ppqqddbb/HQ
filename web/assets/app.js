@@ -9,6 +9,7 @@ import * as correlate from "./pages/correlate.js";
 import * as formation from "./pages/formation.js";
 import * as routes from "./pages/routes.js";
 import * as predict from "./pages/predict.js";
+import * as models from "./pages/models.js";
 import * as admin from "./pages/admin.js";
 
 const ROUTES = [
@@ -24,6 +25,7 @@ const ROUTES = [
   { id: "formation", name: "船舶编群分析", icon: "⧉", mod: formation, title: "船舶编群分析", sub: "DTW · 层次聚类" },
   { id: "routes", name: "频繁轨迹挖掘", icon: "⇢", mod: routes, title: "频繁轨迹挖掘", sub: "网格 · 转移 · 频繁航线" },
   { id: "predict", name: "航迹预测", icon: "◈", mod: predict, title: "航迹预测与回测", sub: "CV · Kalman · GRU" },
+  { id: "models", name: "模型监控", icon: "◎", mod: models, title: "模型卡与监控", sub: "漂移 · 回填误差 · 上线边界" },
   { group: "系统" },
   { id: "admin", name: "系统管理", icon: "⚙", mod: admin, title: "系统管理", sub: "字典 · 配置 · 审计" },
 ];

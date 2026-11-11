@@ -362,3 +362,54 @@ def data_dictionary() -> Dict[str, Any]:
         "fields": [{"field": k, **v} for k, v in DATA_DICTIONARY.items()],
         "source_mapping": FIELD_MAPPING,
     }
+
+
+def sample_features(
+    dataset_version: str,
+    features: List[str],
+    target: int = 20000,
+) -> pd.DataFrame:
+    """均匀抽取若干行作为模型监控的输入分布样本（技术方案 10.10）。
+
+    不做全表扫描后取前 N 行（那样只拿到当天开头的数据，分布有偏），
+    而是先 count 再按 ``row_number() % step`` 等间隔抽样，保证覆盖全天。
+    """
+    allowed = {"sog", "cog", "rot", "heading", "draught", "length", "width",
+               "report_gap_s"}
+    cols = [c for c in features if c in allowed]
+    if not cols:
+        raise ValueError(f"不支持的特征：{features}")
+
+    con = open_dataset(dataset_version)
+    try:
+        total = int(con.execute("SELECT count(*) FROM clean_points").fetchone()[0] or 0)
+        if total == 0:
+            return pd.DataFrame(columns=cols)
+        step = max(1, total // max(1, int(target)))
+        exprs = []
+        for c in cols:
+            if c == "report_gap_s":
+                # 报文间隔需要窗口函数，单独算（按时间排序取前一条的差）
+                exprs.append(
+                    "date_diff('second', lag(event_time) OVER (ORDER BY event_time, mmsi),"
+                    " event_time) AS report_gap_s")
+            else:
+                exprs.append(f"{c} AS {c}")
+        df = con.execute(
+            f"""
+            WITH s AS (
+              SELECT {', '.join(exprs)},
+                     row_number() OVER () AS rn
+              FROM clean_points
+            )
+            SELECT {', '.join(cols)} FROM s WHERE rn % {step} = 0
+            """
+        ).fetchdf()
+    finally:
+        con.close()
+    for c in cols:
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    # 报文间隔偶尔会因跨船/跨段排序出现异常大值，截到 24h 以内便于统计
+    if "report_gap_s" in df.columns:
+        df["report_gap_s"] = df["report_gap_s"].clip(lower=0, upper=86400)
+    return df

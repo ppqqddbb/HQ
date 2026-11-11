@@ -133,6 +133,11 @@ def required_permission(method: str, path: str) -> Optional[str]:
         return "dataset:read"
     if p.startswith("/api/v1/admin/backup") or p.startswith("/api/v1/admin/restore"):
         return "backup:manage"
+    if p.startswith("/api/v1/models"):
+        # 监控页需要看模型卡 / 跑漂移检测 / 登记监控点；写操作视为运行类
+        if m == "POST":
+            return "analysis:run"
+        return "analysis:read"
     if p.startswith("/api/v1/admin/audit"):
         return "audit:read"
     if p.startswith("/api/v1/admin"):
