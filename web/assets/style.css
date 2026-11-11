@@ -120,6 +120,9 @@ table.dt .num{text-align:right;font-variant-numeric:tabular-nums}
   background:linear-gradient(90deg,#22d3ee,#38bdf8,#a78bfa);transition:width .4s ease}
 
 .toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+/* 参数表单里的字段高度不一致（有的带 hint 提示行），底部对齐会让输入框上下错位。
+   改用顶部对齐，并给字段统一最小高度，多个参数框的输入框才能在同一水平线上。 */
+.toolbar.form{align-items:flex-start}
 .field{display:flex;flex-direction:column;gap:4px}
 .field label{font-size:10.5px;color:var(--txt3);letter-spacing:.5px}
 .field input,.field select{min-width:110px}

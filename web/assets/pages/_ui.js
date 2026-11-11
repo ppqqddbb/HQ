@@ -53,7 +53,8 @@ export function field(def) {
 /** 参数表单：返回带 values() 的工具栏节点 */
 export function form(fields) {
   const nodes = fields.map(field);
-  const box = el("div", { class: "toolbar" }, ...nodes);
+  // 加 form 类：参数区改用顶部对齐，避免带 hint 的字段把输入框顶偏
+  const box = el("div", { class: "toolbar form" }, ...nodes);
   box.values = () => {
     const out = {};
     for (const n of nodes) {

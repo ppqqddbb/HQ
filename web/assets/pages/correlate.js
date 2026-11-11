@@ -98,7 +98,16 @@ export async function render(view) {
         fmt: v => Number(v).toFixed(3),
         mapFmt: v => Number(v).toFixed(1),
         yOpt: { axisLabel: { color: "#8fa3bd", fontSize: 10, width: 78, overflow: "truncate" } },
-        xOpt: { axisLabel: { color: "#8fa3bd", fontSize: 10, rotate: 34, width: 78, overflow: "truncate" } },
+        // 变量名较长且要旋转，默认 bottom=54 不够，旋转后的标签会压到下方色阶条上
+        grid: { left: 78, bottom: 92 },
+        xOpt: {
+          axisLabel: {
+            color: "#8fa3bd", fontSize: 10, rotate: 34,
+            width: 78, overflow: "truncate",
+            // 旋转标签默认按格居中，容易与相邻标签扑死；改为靠右对齐更松散
+            align: "right",
+          },
+        },
       });
 
     /* 边表 */
