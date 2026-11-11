@@ -164,9 +164,21 @@ def test_unknown_task_returns_404_with_error_envelope(client):
 
 def test_create_task_rejects_unknown_algorithm(client):
     r = client.post("/api/v1/analysis/tasks", json={"algorithm": "no_such_algo"})
-    assert r.status_code in (400, 422, 500)
+    # 应在创建阶段就拒绝（400），而不是先建任务再以 NO_RUNNER 失败
+    assert r.status_code == 400
     body = r.json()
     assert body["ok"] is False
+    assert "未知算法" in body["error"]["message"]
+
+
+def test_algorithms_list_is_registered(client):
+    """清单里的每个算法都必须能真正执行，避免文档与注册表脱节。"""
+    from aisp import tasks
+
+    tasks._load_runners()
+    names = {a["algorithm"] for a in client.get("/api/v1/algorithms").json()["data"]}
+    registered = set(tasks.RUNNERS) | {"clean"}
+    assert names == registered, f"清单与注册表不一致：{names ^ registered}"
 
 
 def test_admin_meta_contains_dictionary_and_mapping(client):

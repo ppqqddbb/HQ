@@ -390,11 +390,18 @@ def api_algorithms() -> Dict[str, Any]:
 
 @app.post("/api/v1/analysis/tasks")
 def api_create_task(req: TaskRequest) -> Dict[str, Any]:
+    # 先校验算法名：算法名写错是最常见的调用错误，应立刻返回 400，
+    # 而不是让用户先看到“没有可用数据集”这类无关提示。
+    # 也不在创建阶段拒绝未知算法，否则任务会进入队列后以 NO_RUNNER 失败。
+    tasks._load_runners()
+    if req.algorithm not in tasks.RUNNERS and req.algorithm != "clean":
+        raise HTTPException(
+            400,
+            f"未知算法：{req.algorithm}；可选：{', '.join(sorted([*tasks.RUNNERS, 'clean']))}",
+        )
     dv = req.dataset_version or dataservice._latest_dataset()
     if not dv:
         raise HTTPException(400, "没有可用数据集，请先导入 CSV")
-    if req.algorithm not in tasks.RUNNERS and req.algorithm != "clean":
-        tasks._load_runners()
     tid = tasks.create_task(req.algorithm, dv, req.parameters, req.filters, req.created_by)
     tasks.submit(tid)
     return pack({"task_id": tid, "status": "queued", "queue": tasks.get_task(tid)["queue"]})
