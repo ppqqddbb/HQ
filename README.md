@@ -20,7 +20,7 @@
 | 航迹预测与回测 | 匀速外推 / 卡尔曼滤波 / GRU 残差学习，时间外推切分，ADE / FDE / P90 / 截尾均值 + 分层评估 |
 | 模型卡与上线监控 | 模型卡（训练边界/特征/依赖/失效场景）、PSI 输入分布漂移、回填误差趋势、监控点台账与重训判定 |
 | 可视化前端 | 11 个页面，自研 Canvas 瓦片地图（支持离线）、轨迹回放与三种空间筛选（矩形/多边形/圆形）、ECharts 主题化图表 |
-| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、160 项自动化测试 |
+| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、164 项自动化测试 |
 | 身份与权限 | RBAC 五角色（管理员/数据管理员/分析师/只读/审计），Bearer 或 `X-AIS-Token` 两种令牌传递方式，越权操作落审计 |
 | 备份与恢复 | DuckDB `EXPORT DATABASE` 导出式备份（zip），CLI 与系统管理页双入口，恢复后自动校验 |
 | 报告导出 | 每类分析生成离线可打开的 HTML 报告（内嵌 SVG 图表、无外部依赖）与 Markdown 版本，含参数、口径与可追溯信息 |
@@ -97,7 +97,7 @@ HQ/
 │   └── assets/
 │       ├── app.js  util.js  charts.js  state.js  taskrun.js  style.css
 │       └── pages/            # 11 个页面模块（含 models.js）
-├── tests/                    # pytest（160 项）
+├── tests/                    # pytest（164 项）
 │   ├── conftest.py           # 测试期隔离 artifacts 目录
 │   ├── test_geo.py           # 空间与网格
 │   ├── test_stats.py         # 统计与质量口径
@@ -107,7 +107,8 @@ HQ/
 │   ├── test_backup.py        # 备份导出/恢复
 │   ├── test_tasks.py         # 孤儿任务回收与取消语义
 │   ├── test_modelmon.py      # PSI、模型卡、监控点、误差趋势
-│   └── test_report.py        # 报告导出与口径去重
+│   ├── test_report.py        # 报告导出与口径去重
+│   └── test_quality_hist.py  # 质量报告直方图字段名契约
 ├── data/                     # 原始 CSV（不入库）
 ├── artifacts/                # 清洗结果、结果产物、元数据库（不入库）
 ├── requirements.txt
@@ -365,7 +366,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ```powershell
 & "D:\File\Anaconda\envs\py310\python.exe" -m pytest tests -q
-# 160 passed
+# 164 passed
 ```
 
 覆盖范围：
@@ -383,6 +384,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | `test_modelmon.py` | PSI 数值与分级、模型卡字段完整性、监控点与回填趋势、补录时间排序、漂移结论落盘 |
 | `test_clean_frozen.py` | FROZEN_GPS 冻结段识别、计入质量扣分；正常航行/真实锚泊/短暂停靠不被误报；阈值可配 |
 | `test_report.py` | 报告自包含（无 CDN/脚本）、可追溯字段、表格与内嵌 SVG、HTML 转义、降采样保留高热度、未知/未完成任务拒绝、落盘与格式校验 |
+| `test_quality_hist.py` | 质量报告直方图字段名契约（knot / deg / bucket / h），防止前端取值与后端改名脱节 |
 
 测试期通过 `conftest.py` 把 `artifacts/` 重定向到临时目录，避免与运行中的服务争抢 DuckDB 文件锁。
 

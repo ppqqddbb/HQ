@@ -215,7 +215,11 @@ function quickAccess() {
 }
 
 function dur(t) {
-  if (!t.finished_at || !t.started_at) return "—";
-  const s = (new Date(t.finished_at.replace(" ", "T")) - new Date(t.started_at.replace(" ", "T"))) / 1000;
+  // 任务列表接口只返回 created_at / finished_at，没有 started_at，
+  // 之前只看 started_at 会导致所有卡片都显示「耗时 —」。
+  // 用 created_at 兜底（任务排队时间极短，与执行耗时接近）。
+  const begin = t.started_at || t.created_at;
+  if (!t.finished_at || !begin) return "—";
+  const s = (new Date(t.finished_at.replace(" ", "T")) - new Date(begin.replace(" ", "T"))) / 1000;
   return isFinite(s) && s >= 0 ? FMT.dt(s) : "—";
 }
