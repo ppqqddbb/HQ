@@ -19,7 +19,8 @@
 | 频繁轨迹挖掘 | 规则网格 + DDA 网格穿越补格 + 有向转移边 + 频繁航线（支持度按航次去重） |
 | 航迹预测与回测 | 匀速外推 / 卡尔曼滤波 / GRU 残差学习，时间外推切分，ADE / FDE / P90 / 截尾均值 + 分层评估 |
 | 可视化前端 | 10 个页面，自研 Canvas 瓦片地图（支持离线），ECharts 主题化图表 |
-| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、65 项自动化测试 |
+| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、80 项自动化测试 |
+| 报告导出 | 每类分析生成离线可打开的 HTML 报告（内嵌 SVG 图表、无外部依赖）与 Markdown 版本，含参数、口径与可追溯信息 |
 
 ---
 
@@ -48,7 +49,7 @@
                     │ tasks.py   队列 + 进度 + SSE + 审计          │
                     │ store.py   进程内共享 DuckDB + 元数据库      │
                     └──────────────────┬──────────────────────────┘
-                                       ▼  FastAPI (api.py, 27 个端点)
+                                       ▼  FastAPI (api.py, 29 个端点)
                     ┌─────────────────────────────────────────────┐
                     │ web/  10 个页面（原生 ESM + ECharts + Canvas）│
                     └─────────────────────────────────────────────┘
@@ -77,7 +78,7 @@ HQ/
 │   ├── store.py              # DuckDB 连接管理与元数据库
 │   ├── tasks.py              # 任务队列、进度、审计
 │   ├── dataservice.py        # 地图与数据集查询
-│   ├── api.py                # FastAPI 应用（27 个端点）
+│   ├── api.py                # FastAPI 应用（29 个端点）
 │   ├── cli.py                # 命令行入口
 │   └── algorithms/           # 六类分析算法
 │       ├── common.py         # 统一过滤条件与结果写盘
@@ -89,11 +90,12 @@ HQ/
 │   └── assets/
 │       ├── app.js  util.js  charts.js  state.js  taskrun.js  style.css
 │       └── pages/            # 10 个页面模块
-├── tests/                    # pytest（65 项）
+├── tests/                    # pytest（80 项）
 │   ├── conftest.py           # 测试期隔离 artifacts 目录
 │   ├── test_geo.py           # 空间与网格
 │   ├── test_stats.py         # 统计与质量口径
-│   └── test_ingest_api.py    # 导入与 API 契约
+│   ├── test_ingest_api.py    # 导入与 API 契约
+│   └── test_report.py        # 报告导出与口径去重
 ├── data/                     # 原始 CSV（不入库）
 ├── artifacts/                # 清洗结果、结果产物、元数据库（不入库）
 ├── requirements.txt
@@ -185,7 +187,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | 路由 | 页面 | 主要可视化 |
 |---|---|---|
 | `#/overview` | 总览工作台 | KPI、逐小时上报量、船型占比、航速构成（对数轴）、质量维度、任务状态、快捷入口 |
-| `#/datacenter` | 文件与批次 | 文件预检、批次表、质量报告、异常标记分布、下载 |
+| `#/datacenter` | 文件与批次 | 文件预检、浏览器上传、批次表、质量报告、异常标记分布、下载 |
 | `#/map` | AIS 轨迹地图 | Canvas 瓦片地图、轨迹线、密度网格、驻留点、船型多选、船舶清单 |
 | `#/hotspot` | 热点区域分析 | 网格热力 + 凸包 + 聚类标签、簇表（可仅看主要热点）、参数敏感性 ARI |
 | `#/profile` | 船舶目标画像 | 船舶列表（吸顶）、速度直方、航向玫瑰、逐小时曲线、单船/多船雷达 |
@@ -195,9 +197,21 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | `#/predict` | 航迹预测 | 截尾/平均 ADE 分组柱图、逐步误差、分层表、样例轨迹、GRU 损失、上线判定 |
 | `#/admin` | 系统管理 | 数据字典、源字段映射、默认参数、队列配置、审计日志 |
 
+### 报告导出
+
+任务运行成功后，任务状态条右侧会出现「HTML 报告」「Markdown」两个按钮：
+
+- **HTML**：服务端现场生成自包含页面（样式、图表全部内联 SVG，不引用任何 CDN），
+  可直接在新标签页阅读或 `Ctrl+P` 打印为 PDF；同时落盘到 `artifacts/results/{task_id}/report.html`。
+- **Markdown**：下载 `.md`，含 YAML 头部（任务 ID、数据版本、代码版本、生成时间）、
+  关键指标表、结果表与结论口径，便于归档或导入知识库。
+
+报告内固定包含**可追溯三件套**：任务 ID、数据集版本、代码版本（Git 短哈希），
+以及该算法的「结论口径与使用边界」，避免指标被脱离上下文引用。
+
 ---
 
-## 7. API 清单（27 个端点）
+## 7. API 清单（29 个端点）
 
 统一响应结构：成功 `{request_id, ok: true, data}`，失败 `{request_id, ok: false, error: {code, message}}`。
 
@@ -207,6 +221,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 |---|---|---|
 | POST | `/api/v1/datasets/preflight` | 文件预检（编码/分隔符/字段映射/缺失率） |
 | POST | `/api/v1/datasets/import` | 导入 CSV，可选治理 |
+| POST | `/api/v1/datasets/upload` | 浏览器直传 CSV（multipart，流式落盘 + SHA256 + 预检） |
 | GET | `/api/v1/datasets` | 批次列表 |
 | GET | `/api/v1/datasets/{version}/profile` | 数据集画像（含稳健 bbox） |
 | GET | `/api/v1/datasets/{version}/quality` | 质量报告 |
@@ -234,6 +249,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | GET | `/api/v1/tasks/{id}/summary` | 结果摘要（页面渲染用） |
 | GET | `/api/v1/tasks/{id}/files` | 结果文件清单 |
 | GET | `/api/v1/tasks/{id}/download/{name}` | 下载结果文件 |
+| GET | `/api/v1/tasks/{id}/report?format=html\|md` | 导出分析报告（HTML 内联预览 / Markdown 下载） |
 | POST | `/api/v1/tasks/{id}/cancel` | 取消任务 |
 | GET | `/api/v1/tasks/{id}/events` | SSE 进度流 |
 
@@ -285,7 +301,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ```powershell
 & "D:\File\Anaconda\envs\py310\python.exe" -m pytest tests -q
-# 65 passed
+# 80 passed
 ```
 
 覆盖范围：
@@ -294,7 +310,8 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 |---|---|
 | `test_geo.py` | 球面距离、投影往返、网格左闭右开边界、外边界归并、DDA 四连通性、圆均值跨北 |
 | `test_stats.py` | BH 单调性与上界、强度分档对称性、航线连续匹配语义、质量权重和为 1、加权公式复算 |
-| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知资源 404 |
+| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知资源 404、上传文件名净化与路径穿越防护 |
+| `test_report.py` | 报告自包含（无 CDN/脚本）、可追溯字段、表格与内嵌 SVG、HTML 转义、降采样保留高热度、未知/未完成任务拒绝、落盘与格式校验 |
 
 测试期通过 `conftest.py` 把 `artifacts/` 重定向到临时目录，避免与运行中的服务争抢 DuckDB 文件锁。
 
