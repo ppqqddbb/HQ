@@ -71,6 +71,46 @@ def test_distribution_shift_reports_missing_rate():
     assert sog["missing_reference"] is not None and sog["missing_reference"] < 0.01
 
 
+def test_missing_rate_increase_raises_drift_level():
+    """缺失率暴增是非缺失值 PSI 无法捕获的漂移，必须单独抬高判定等级。"""
+    rng = np.random.default_rng(11)
+    ref = pd.DataFrame({"sog": rng.normal(8, 2, 4000)})
+    # 分布形状完全不变，但一半数据缺失
+    cur = pd.DataFrame({"sog": np.where(rng.random(4000) < 0.5, np.nan,
+                                        rng.normal(8, 2, 4000))})
+    row = modelmon.distribution_shift(ref, cur, ["sog"])[0]
+    # 只看 PSI 会是稳定的，实际确实稳定
+    assert row["psi"] < modelmon.PSI_WARN
+    assert row["psi_level"] == "stable"
+    # 但缺失率上升约 50 个百分点，应判为 alert
+    assert row["missing_level"] == "alert"
+    assert row["level"] == "alert"
+    assert row["missing_rise"] > 0.4
+
+    verdict = modelmon.drift_verdict([row])
+    assert verdict["action"] == "retrain"
+    assert "缺失率" in verdict["message"]
+
+
+def test_small_missing_rise_is_not_flagged():
+    """缺失率小幅波动不应误报。"""
+    rng = np.random.default_rng(12)
+    ref = pd.DataFrame({"sog": rng.normal(8, 2, 4000)})
+    cur = pd.DataFrame({"sog": np.where(rng.random(4000) < 0.02, np.nan,
+                                        rng.normal(8, 2, 4000))})
+    row = modelmon.distribution_shift(ref, cur, ["sog"])[0]
+    assert row["missing_level"] is None
+    assert row["level"] == "stable"
+
+
+def test_missing_level_thresholds():
+    assert modelmon.missing_level(0.0, 0.0) is None
+    assert modelmon.missing_level(0.0, modelmon.MISSING_WARN / 2) is None
+    assert modelmon.missing_level(0.0, modelmon.MISSING_WARN) == "warn"
+    assert modelmon.missing_level(0.0, modelmon.MISSING_ALERT) == "alert"
+    assert modelmon.missing_level(None, 0.5) is None
+
+
 def test_drift_verdict_actions():
     stable = [{"feature": "sog", "level": "stable"}]
     warn = [{"feature": "sog", "level": "warn"}]

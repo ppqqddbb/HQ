@@ -24,7 +24,7 @@ export async function render(view) {
   view.appendChild(head);
   view.appendChild(cardBox);
   view.appendChild(el("div", { class: "grid g2", style: { marginBottom: "14px" } },
-    card("输入分布漂移（PSI）", "以训练期为参照，对比当前数据集；>0.25 视为显著漂移", driftBox),
+    card("输入分布漂移（PSI）", "以训练期为参照，对比当前数据集；PSI>0.25 或缺失率上升≥20% 视为显著漂移", driftBox),
     card("回填误差趋势", "上线后实际回填误差相对首评的变化", trendBox)));
   view.appendChild(card("模型卡与操作", "训练范围 · 指标 · 特征 · 失效场景 · 监控登记", actionBox));
   ui.card = cardBox; ui.drift = driftBox; ui.trend = trendBox; ui.action = actionBox;
@@ -200,10 +200,17 @@ function renderDrift(rows, verdict) {
     { label: "特征", render: r => el("b", {}, r.feature) },
     { label: "说明", render: r => el("span", { style: { color: "var(--txt2)" } }, r.label) },
     { label: "PSI", num: true, render: r => r.psi === null ? "—" : Number(r.psi).toFixed(4) },
+    { label: "缺失率(参照→当前)", num: true, render: r => {
+      const txt = (r.missing_reference === null ? "—" : (r.missing_reference * 100).toFixed(1) + "%") +
+        " → " + (r.missing_current === null ? "—" : (r.missing_current * 100).toFixed(1) + "%");
+      // 缺失率上升会单独抬高判定等级，这里把原因标出来，避免只看 PSI 时误判为稳定
+      if (!r.missing_level) return txt;
+      return el("span", {},
+        txt,
+        el("span", { class: "tag " + (LEVEL_TAG[r.missing_level] || ""), style: { marginLeft: "6px" } },
+          "缺失↑"));
+    } },
     { label: "判定", render: r => el("span", { class: "tag " + (LEVEL_TAG[r.level] || "") }, LEVEL_CN[r.level] || r.level) },
-    { label: "缺失率(参照→当前)", num: true, render: r =>
-      (r.missing_reference === null ? "—" : (r.missing_reference * 100).toFixed(1) + "%") + " → " +
-      (r.missing_current === null ? "—" : (r.missing_current * 100).toFixed(1) + "%") },
   ], rows));
 }
 

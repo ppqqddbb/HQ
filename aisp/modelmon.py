@@ -37,6 +37,11 @@ PSI_ALERT = 0.25
 #: 回填误差相对首评恶化多少算「持续恶化」
 ERR_WORSEN_PCT = 20.0
 
+#: 缺失率相对参照期上升多少（绝对值）算显著：缺失率也是输入质量的一部分，
+#: 只算 PSI 会漏掉「非缺失值分布没变、但一半数据丢了」这种严重问题。
+MISSING_WARN = 0.05
+MISSING_ALERT = 0.20
+
 #: 默认监控的输入特征（与 predict 的特征清单保持一致）
 DEFAULT_WATCH_FEATURES = ["sog", "cog", "rot", "heading", "report_gap_s"]
 
@@ -257,6 +262,26 @@ def psi_level(v: Optional[float]) -> str:
     return "stable"
 
 
+def missing_level(ref_missing: Optional[float], cur_missing: Optional[float]) -> Optional[str]:
+    """缺失率上升幅度分级。返回 None 表示无法判定或没有恶化。"""
+    if ref_missing is None or cur_missing is None:
+        return None
+    rise = float(cur_missing) - float(ref_missing)
+    if rise >= MISSING_ALERT:
+        return "alert"
+    if rise >= MISSING_WARN:
+        return "warn"
+    return None
+
+
+def _worse(a: str, b: Optional[str]) -> str:
+    """取两个分级的较差者（alert > warn > stable > insufficient）。"""
+    order = {"insufficient": 0, "stable": 1, "warn": 2, "alert": 3}
+    if b is None:
+        return a
+    return a if order.get(a, 0) >= order.get(b, 0) else b
+
+
 def distribution_shift(
     reference: pd.DataFrame,
     current: pd.DataFrame,
@@ -271,11 +296,19 @@ def distribution_shift(
         ref_nan = float(np.mean(~np.isfinite(ref))) if ref.size else None
         cur_nan = float(np.mean(~np.isfinite(cur))) if cur.size else None
         v = psi(ref, cur)
+        # 缺失率上升本身也是输入质量漂移：只用 PSI 会漏掉
+        # 「分布形状没变、但一半数据缺了」这种情形。
+        m_lvl = missing_level(ref_nan, cur_nan)
+        lvl = _worse(psi_level(v), m_lvl)
         rows.append({
             "feature": f,
             "label": FEATURE_LABELS.get(f, f),
             "psi": None if v is None else round(v, 4),
-            "level": psi_level(v),
+            "level": lvl,
+            "psi_level": psi_level(v),
+            "missing_level": m_lvl,
+            "missing_rise": (None if (ref_nan is None or cur_nan is None)
+                             else round(cur_nan - ref_nan, 4)),
             "n_reference": int(ref.size),
             "n_current": int(cur.size),
             "missing_reference": None if ref_nan is None else round(ref_nan, 4),
@@ -285,15 +318,27 @@ def distribution_shift(
 
 
 def drift_verdict(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """把逐特征 PSI 汇总成一个可直接展示的结论。"""
+    """把逐特征 PSI / 缺失率汇总成一个可直接展示的结论。"""
+    def _why(r: Dict[str, Any]) -> str:
+        parts = []
+        if r.get("psi_level") == "alert" or (r.get("psi_level") == "warn"):
+            parts.append(f"PSI={r.get('psi')}")
+        if r.get("missing_level"):
+            parts.append(f"缺失率 {r.get('missing_reference')}→{r.get('missing_current')}")
+        return f"{r['feature']}（{'，'.join(parts)}）" if parts else r["feature"]
+
     alerts = [r for r in rows if r["level"] == "alert"]
     warns = [r for r in rows if r["level"] == "warn"]
     if alerts:
         action = "retrain"
-        text = f"{len(alerts)} 个特征显著漂移（PSI≥{PSI_ALERT}），建议重新训练或降级到基线模型"
+        text = (f"{len(alerts)} 个特征显著漂移（PSI≥{PSI_ALERT} 或缺失率上升≥{MISSING_ALERT:.0%}）："
+                + "、".join(_why(r) for r in alerts[:3])
+                + "；建议重新训练或降级到基线模型")
     elif warns:
         action = "watch"
-        text = f"{len(warns)} 个特征轻度漂移（PSI≥{PSI_WARN}），建议加密监控"
+        text = (f"{len(warns)} 个特征轻度漂移（PSI≥{PSI_WARN} 或缺失率上升≥{MISSING_WARN:.0%}）："
+                + "、".join(_why(r) for r in warns[:3])
+                + "；建议加密监控")
     elif any(r["level"] == "stable" for r in rows):
         action = "ok"
         text = "输入分布稳定，可继续在线使用"
