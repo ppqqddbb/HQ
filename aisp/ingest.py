@@ -171,13 +171,12 @@ def _std_expr(std: str, col: str) -> str:
     src = f'"{col}"'
     if std == "mmsi":
         return f"nullif(trim(CAST({src} AS VARCHAR)), '')"
-    if std == "lat":
+    if std in ("lat", "lon", "sog", "cog", "heading", "rot", "draught", "length", "width"):
         return f"try_cast({src} AS DOUBLE)"
-    if std == "lon":
-        return f"try_cast({src} AS DOUBLE)"
-    if std in ("sog", "cog", "heading", "rot", "draught", "length", "width"):
-        return f"try_cast({src} AS DOUBLE)"
-    return f"trim(CAST({src} AS VARCHAR))"
+    # 文本字段：把供应商占位值 Unknown/Undefined、空串统一归为 NULL，避免污染统计
+    return (
+        f"nullif(nullif(nullif(trim(CAST({src} AS VARCHAR)), ''), 'Unknown'), 'Undefined')"
+    )
 
 
 def ingest_csv(

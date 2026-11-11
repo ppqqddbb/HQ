@@ -44,6 +44,11 @@ def _p(cb: ProgressCb, pct: float, stage: str) -> None:
         cb(pct, stage)
 
 
+def staypoints_path(dataset_version: str):
+    """驻留点文件路径；不存在时返回路径本身（调用方检查 exists）。"""
+    return settings.clean_root / dataset_version / "staypoints.parquet"
+
+
 # --------------------------------------------------------------------------- 主流程
 
 def build_clean(

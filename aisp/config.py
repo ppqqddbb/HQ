@@ -148,14 +148,21 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "min_segment_points": 5,         # 轨迹段最小点数
         "stay_radius_m": 200.0,          # 驻留点半径 R
         "stay_minutes": 20.0,            # 驻留点最短持续 T
+        "stay_max_sog_kn": 1.5,          # 驻留候选点的航速上限
+        "dedup_keys": ["mmsi", "event_time"],
+        # 基站/航标/SAR 飞机不是船舶目标，默认不进入船舶轨迹分析
+        "exclude_mobile_types": [
+            "Base Station", "AtoN", "SAR Airborne", "Search and Rescue Transponder"
+        ],
     },
     "hotspot": {
-        "min_cluster_size": 60,
-        "min_samples": 12,
+        "min_cluster_size": 150,
+        "min_samples": 20,
         "cluster_selection_method": "eom",
         "cluster_selection_epsilon": 0.0,
         "time_slot_minutes": 5,
-        "max_points": 300_000,
+        "max_points": 150_000,
+        "min_vessels": 8,
         "grid_resolution": 0.01,
         "top_n": 20,
     },
@@ -187,15 +194,17 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "grid_cols": 10,
         "cell_size_m": 1000.0,
         "min_support_count": 3,
-        "min_support_ratio": 0.05,
+        "min_support_ratio": 0.01,
         "min_pattern_len": 3,
-        "max_pattern_len": 6,
+        "max_pattern_len": 8,
         "max_gap_seconds": 3600.0,
         "max_jump_m": 20000.0,
         "enable_grid_traversal": False,
         "counting_unit": "trajectory_segment_id",
         "top_k": 20,
-        "extent_buffer_deg": 0.02,
+        "extent_mode": "percentile",
+        "extent_quantile": 0.005,
+        "extent_buffer_deg": 0.0,
     },
     "predict": {
         "input_minutes": 60,
@@ -204,7 +213,10 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "models": ["cv", "kalman", "gru"],
         "gru_epochs": 30,
         "gru_hidden": 64,
+        "gru_target": "residual",
         "max_windows": 60000,
+        "max_trajectories": 800,
+        "min_quality_score": 60.0,
         "seed": 42,
         "min_points": 8,
     },
