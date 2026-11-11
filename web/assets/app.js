@@ -80,7 +80,11 @@ function renderMiniStats() {
   add("点位", o.n_points ? FMT.big(o.n_points) : "—");
   add("船舶", o.n_mmsi ? FMT.num(o.n_mmsi) : "—");
   add("航段", o.n_trajectories ? FMT.big(o.n_trajectories) : "—");
-  add("质量分", o.avg_quality ? o.avg_quality.toFixed(1) : "—");
+  // 质量分：优先使用数据集级综合质量分（多维度加权），与概览页保持一致；
+  // 没有质量报告时回退到逐点质量均分（avg_quality）。
+  const qs = (o.quality || {}).overall_score;
+  add("质量分", qs !== undefined && qs !== null ? Number(qs).toFixed(1)
+    : (o.avg_quality ? Number(o.avg_quality).toFixed(1) : "—"));
 }
 
 let current = null;

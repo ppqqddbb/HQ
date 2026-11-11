@@ -93,14 +93,24 @@ function kpi(label, value, sub) {
 function table(cols, rows, opts = {}) {
   const thead = el("thead", {}, el("tr", {}, ...cols.map(c =>
     el("th", { class: c.num ? "num" : "" }, c.label))));
-  const tbody = el("tbody", {}, ...rows.map(r => el("tr", {},
-    ...cols.map(c => {
+  const tbody = el("tbody", {}, ...rows.map(r => {
+    const tr = el("tr", {}, ...cols.map(c => {
       const v = c.render ? c.render(r) : r[c.key];
       if (v instanceof Node) return el("td", {}, v);
       return el("td", { class: c.num ? "num" : "" }, v === null || v === undefined ? "—" : String(v));
-    }))));
+    }));
+    // 支持行高亮（例如当前选中行）与整行点击
+    if (opts.highlight && opts.highlight(r)) tr.classList.add("sel");
+    if (opts.onRowClick) {
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => opts.onRowClick(r, tr));
+    }
+    return tr;
+  }));
   const t = el("table", { class: "dt" }, thead, tbody);
-  return el("div", { class: "scroll " + (opts.tall ? "tall-scroll" : "") }, t);
+  const wrap = el("div", { class: "scroll " + (opts.tall ? "tall-scroll" : "") }, t);
+  if (opts.maxHeight) wrap.style.maxHeight = typeof opts.maxHeight === "number" ? opts.maxHeight + "px" : opts.maxHeight;
+  return wrap;
 }
 
 function bars(items, opts = {}) {

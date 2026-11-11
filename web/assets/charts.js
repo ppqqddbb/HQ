@@ -34,9 +34,25 @@ function disposeCharts() {
 }
 
 function chartBar(dom, labels, values, opts = {}) {
+  // 支持分组柱状图：opts.series = [{name, data, color}] 时按多组绘制。
+  const groups = opts.series && opts.series.length
+    ? opts.series.map((s, i) => ({
+      name: s.name, data: s.data,
+      color: s.color || THEME.color[i % THEME.color.length],
+      color2: s.color2,
+    }))
+    : [{ name: opts.name || "", data: values, color: opts.color || "#38bdf8", color2: opts.color2 }];
+  const mkColor = (g) => (opts.gradient !== false
+    ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+      { offset: 0, color: g.color }, { offset: 1, color: g.color2 || "rgba(56,189,248,.18)" }])
+    : g.color);
   return mkChart(dom, {
     tooltip: Object.assign({ trigger: "axis", axisPointer: { type: "shadow" } }, THEME.tooltip),
-    grid: Object.assign({}, THEME.grid, { bottom: opts.rotate ? 62 : 34 }),
+    legend: groups.length > 1 ? {
+      textStyle: { color: "#9db0c9", fontSize: 11 }, top: 0, right: 10,
+      icon: "roundRect", itemWidth: 9, itemHeight: 9,
+    } : undefined,
+    grid: Object.assign({}, THEME.grid, { bottom: opts.rotate ? 62 : 34, top: groups.length > 1 ? 40 : 34 }),
     xAxis: {
       type: "category", data: labels, ...AXIS,
       axisLabel: Object.assign({}, AXIS.axisLabel, {
@@ -46,20 +62,14 @@ function chartBar(dom, labels, values, opts = {}) {
       }),
     },
     yAxis: Object.assign({ type: "value", ...AXIS, name: opts.yName || "", nameTextStyle: { color: "#6f839c", fontSize: 10 } }, opts.yOpt || {}),
-    series: [{
-      type: "bar", data: values, barMaxWidth: 26,
-      itemStyle: {
-        borderRadius: [3, 3, 0, 0],
-        color: opts.gradient !== false
-          ? new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: opts.color || "#38bdf8" }, { offset: 1, color: opts.color2 || "rgba(56,189,248,.18)" }])
-          : (opts.color || "#38bdf8"),
-      },
+    series: groups.map(g => ({
+      name: g.name, type: "bar", data: g.data, barMaxWidth: groups.length > 1 ? 18 : 26,
+      itemStyle: { borderRadius: [3, 3, 0, 0], color: mkColor(g) },
       label: opts.showLabel ? {
         show: true, position: "top", color: "#9db0c9", fontSize: 10,
         formatter: p => (opts.labelFmt ? opts.labelFmt(p.value) : String(p.value)),
       } : undefined,
-    }],
+    })),
   }, opts);
 }
 
@@ -119,22 +129,37 @@ function chartRose(dom, labels, values, opts = {}) {
 }
 
 function chartHeatmap(dom, xs, ys, data, opts = {}) {
+  // 统一数据形式：ECharts 的 heatmap 只接受扁平的 [x, y, value] 列表。
+  // 传入二维矩阵（按行嵌套）时必须先摊平，否则每行会被当成一个数据项，
+  // 导致 value 为 undefined → visualMap 取不到颜色 → addColorStop 报错。
+  let items = data;
+  if (Array.isArray(items) && items.length && Array.isArray(items[0]) && Array.isArray(items[0][0])) {
+    items = items.flat();
+  }
+  items = items.map(d => [d[0], d[1], Number(d[2])]);
+  // 自动确定色阶范围：必须真正包住数据的 min/max，否则同样会算出 undefined 颜色。
+  const vals = items.map(d => d[2]).filter(v => Number.isFinite(v));
+  const dMin = vals.length ? Math.min(...vals) : 0;
+  const dMax = vals.length ? Math.max(...vals) : 1;
+  const min = opts.min !== undefined ? opts.min : Math.min(0, dMin);
+  const max = opts.max !== undefined ? opts.max : Math.max(1e-9, dMax);
   return mkChart(dom, {
     tooltip: Object.assign({
       position: "top",
-      formatter: p => `${ys[p.value[1]]} · ${xs[p.value[0]]}<br/><b>${p.value[2]}</b>`,
+      formatter: p => `${ys[p.value[1]]} · ${xs[p.value[0]]}<br/><b>${opts.fmt ? opts.fmt(p.value[2]) : p.value[2]}</b>`,
     }, THEME.tooltip),
-    grid: Object.assign({}, THEME.grid, { left: 60, bottom: 54, top: 20 }),
+    grid: Object.assign({}, THEME.grid, { left: 60, bottom: 54, top: 20 }, opts.grid || {}),
     xAxis: Object.assign({ type: "category", data: xs, splitArea: { show: true }, ...AXIS }, opts.xOpt || {}),
     yAxis: Object.assign({ type: "category", data: ys, splitArea: { show: true }, ...AXIS }, opts.yOpt || {}),
     visualMap: {
-      min: opts.min ?? 0, max: opts.max ?? Math.max(1, ...data.map(d => d[2])),
+      min, max,
       calculable: true, orient: "horizontal", left: "center", bottom: 2,
       itemWidth: 10, itemHeight: 70, textStyle: { color: "#8fa3bd", fontSize: 10 },
+      formatter: opts.mapFmt,
       inRange: { color: opts.colors || ["#0c1d33", "#12507a", "#1e88b8", "#38bdf8", "#7ef0ff"] },
     },
     series: [{
-      type: "heatmap", data, label: { show: opts.showLabel === true, fontSize: 9, color: "#0b1220" },
+      type: "heatmap", data: items, label: { show: opts.showLabel === true, fontSize: 9, color: opts.labelColor || "#dbe7f5" },
       itemStyle: { borderColor: "rgba(11,18,32,.5)", borderWidth: 1 },
       emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(56,189,248,.5)" } },
     }],

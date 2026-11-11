@@ -104,15 +104,23 @@ export async function render(view) {
       kpi("GRU 相对基线", verdict.improvement_pct !== undefined ? verdict.improvement_pct.toFixed(1) + "%" : "—",
         verdict.can_go_online ? "具备上线条件" : "暂不建议上线")));
 
-    /* 误差对比 */
+    /* 误差对比：截尾 ADE 与平均 ADE 用分组柱状图展示，柱高可比且省空间 */
     cmpBody.innerHTML = "";
-    const c1 = el("div", { class: "chart", style: { height: "250px" } });
-    const c2 = el("div", { class: "chart", style: { height: "210px", marginTop: "4px" } });
-    cmpBody.appendChild(c1); cmpBody.appendChild(c2);
-    chartBar(c1, models.map(x => MODEL_CN[x] || x), models.map(x => m[x].trimmed_ADE_m ?? 0),
-      { yName: "截尾 ADE（米）", showLabel: true, labelFmt: v => FMT.m(v) });
-    chartBar(c2, models.map(x => MODEL_CN[x] || x), models.map(x => m[x].ADE_m ?? 0),
-      { yName: "平均 ADE（米）", color: "#f472b6", color2: "rgba(244,114,182,.15)", labelFmt: v => FMT.m(v) });
+    const c1 = el("div", { class: "chart", style: { height: "300px" } });
+    cmpBody.appendChild(c1);
+    chartBar(c1, models.map(x => MODEL_CN[x] || x), null, {
+      yName: "ADE（米）",
+      showLabel: true,
+      labelFmt: v => FMT.m(v),
+      series: [
+        { name: "截尾 ADE（P95）", data: models.map(x => Number((m[x].trimmed_ADE_m ?? 0).toFixed(1))), color: "#38bdf8" },
+        { name: "平均 ADE", data: models.map(x => Number((m[x].ADE_m ?? 0).toFixed(1))), color: "#f472b6", color2: "rgba(244,114,182,.15)" },
+      ],
+    });
+    cmpBody.appendChild(el("div", { class: "note", style: { marginTop: "8px" } },
+      `截尾 ADE 取 95% 截尾均值，对少数漂移轨迹更稳健；平均 ADE 保留长尾影响。` +
+      `当前最优：${MODEL_CN[best] || best}（截尾 ${FMT.m(m[best].trimmed_ADE_m)}，` +
+      `相比匀速基线改善 ${verdict.improvement_pct !== undefined ? verdict.improvement_pct.toFixed(1) + "%" : "—"}）。`));
 
     /* 逐步误差 */
     stepBody.innerHTML = "";
@@ -182,14 +190,15 @@ export async function render(view) {
         const cEl = el("div", { class: "chart", style: { height: "260px" } });
         const holder = el("div", {});
         holder.appendChild(el("div", { style: { fontSize: "11px", color: "var(--txt3)", marginBottom: "2px" } },
-          `样例 ${i + 1} · 轨迹 ${String(s.traj_id).slice(0, 8)}…`));
+          `样例 ${i + 1} · ${String(s.traj_id).slice(0, 8)}… · 均速 ${s.mean_sog_kn ?? "—"} kn · ADE ${s.ade_m !== undefined ? FMT.m(s.ade_m) : "—"}`));
         holder.appendChild(cEl);
         wrap.appendChild(holder);
         drawPath(cEl, s, models);
       });
       sampleBody.appendChild(wrap);
       sampleBody.appendChild(el("div", { class: "note", style: { marginTop: "10px" } },
-        "坐标已平移到轨迹起点为原点，单位为米；样例仅用于直观检查形态，量化结论以全测试集指标为准。"));
+        "坐标已平移到“历史最后一点”为原点，单位为米；蓝色历史线位于左下方，右上方为真值与各模型预测。" +
+        "样例优先选取在航且误差接近中位水平的窗口，仅用于直观检查形态，量化结论以全测试集指标为准。"));
     } else sampleBody.appendChild(empty("无样例数据"));
 
     /* 训练损失 */
@@ -245,9 +254,18 @@ function drawPath(dom, s, models) {
   mkChart(dom, {
     tooltip: Object.assign({ trigger: "axis" }, THEME.tooltip),
     legend: { textStyle: { color: "#9db0c9", fontSize: 10 }, top: 0, icon: "roundRect", itemWidth: 9, itemHeight: 9 },
-    grid: { left: 56, right: 16, top: 38, bottom: 40, containLabel: true },
-    xAxis: Object.assign({ type: "value", scale: true, name: "东向 (m)", nameTextStyle: { color: "#6f839c", fontSize: 10 } }, AXIS),
-    yAxis: Object.assign({ type: "value", scale: true, name: "北向 (m)", nameTextStyle: { color: "#6f839c", fontSize: 10 } }, AXIS),
+    grid: { left: 62, right: 22, top: 44, bottom: 42, containLabel: true },
+    // 设置等比例坐标轴，避免经纬度/米制比例失真导致轨迹形态被拉歪
+    xAxis: Object.assign({
+      type: "value", scale: true, name: "东向 (m)",
+      nameTextStyle: { color: "#6f839c", fontSize: 10 },
+      nameGap: 24,
+    }, AXIS),
+    yAxis: Object.assign({
+      type: "value", scale: true, name: "北向 (m)",
+      nameTextStyle: { color: "#6f839c", fontSize: 10 },
+      nameGap: 38,
+    }, AXIS),
     series: series.map(x => ({
       name: x.name, type: "line", data: x.data, showSymbol: true,
       symbolSize: 3.5, smooth: false, lineStyle: { width: x.w, color: x.color },

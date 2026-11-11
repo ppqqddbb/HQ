@@ -22,6 +22,9 @@ export async function render(view) {
 
   const listCard = card("船舶列表", "点击行查看该船画像", el("div", { id: "pvList" }));
   const detailCard = card("船舶画像详情", "选择左侧船舶", el("div", { id: "pvDetail" }));
+  // 左列内容较长时保持吸顶，右侧滚动查看画像时不用来回滚动
+  listCard.style.position = "sticky";
+  listCard.style.top = "0";
   view.appendChild(el("div", { class: "grid g32", style: { alignItems: "start" } },
     listCard, detailCard));
 
@@ -70,23 +73,30 @@ export async function render(view) {
 
     host.appendChild(table([
       { label: "MMSI", key: "mmsi" },
-      { label: "船名", render: r => r.name && r.name !== "未知" ? String(r.name).slice(0, 14) : "未知" },
-      { label: "船型", render: r => r.ship_type || "—" },
+      { label: "船名", render: r => r.name && r.name !== "未知" ? String(r.name).slice(0, 9) : "未知" },
       { label: "点数", num: true, render: r => FMT.big(r.points) },
-      { label: "中位 SOG", num: true, render: r => fmtN(r.median_sog, 1) },
+      { label: "中位 kn", num: true, render: r => fmtN(r.median_sog, 1) },
       { label: "航程 km", num: true, render: r => fmtN(r.distance_km, 0) },
       {
         label: "", render: r => el("button", { class: "btn sm", onclick: () => select(r.mmsi) }, "画像"),
       },
-    ], vs, { tall: true }));
+    ], vs, { tall: true, maxHeight: 560 }));
 
-    if (vs.length) await select(vs[0].mmsi);
+    // 默认选择第一艘“有航行行为”的船（排除基站/助航设备），否则回退到第一行
+    const pick = vs.find(r => r.median_sog !== null && r.median_sog !== undefined
+      && !/Base Station|AtoN|Undefined/i.test(String(r.mobile_type || ""))) || vs[0];
+    if (pick) await select(pick.mmsi);
   }
 
   async function select(mmsi) {
     current = mmsi;
     const host = view.querySelector("#pvDetail");
     host.innerHTML = "";
+    // 同步列表中选中行的高亮
+    view.querySelectorAll('#pvList table.dt tbody tr').forEach(tr => {
+      const first = tr.querySelector("td");
+      tr.classList.toggle("sel", !!first && first.textContent.trim() === String(mmsi));
+    });
     const v = (data.vessels || []).find(x => String(x.mmsi) === String(mmsi));
     if (!v) { host.appendChild(empty("未找到该船")); return; }
 
@@ -97,7 +107,8 @@ export async function render(view) {
         `均值 ${fmtN(v.mean_sog, 2)} · P95 ${fmtN(v.p95_sog, 1)}`),
       kpi("累计航程", fmtN(v.distance_km, 1) + " km",
         `活动范围 ${fmtN(v.activity_span_km, 1)} km`),
-      kpi("数据质量", fmtN(v.avg_quality, 1), `驻留 ${fmtN(v.stay_count, 0)} 次`)));
+      kpi("平均航速", fmtN(v.avg_speed_kn, 2) + " kn",
+        `静止占比 ${FMT.pct(v.low_speed_ratio || 0)} · 驻留 ${fmtN(v.stay_count, 0)} 次`)));
 
     host.appendChild(el("div", { class: "grid g2", style: { marginBottom: "12px" } },
       el("dl", { class: "kv", style: { background: "var(--panel)", border: "1px solid var(--line)", borderRadius: "8px", padding: "10px 12px" } },
@@ -132,8 +143,10 @@ export async function render(view) {
       const map = {};
       for (const r of sh) map[r.k] = (map[r.k] || 0) + r.n;
       const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
-      chartBar(spd, ks.map(k => k + " kn"), ks.map(k => map[k]), { yName: "点数", labelFmt: x => FMT.big(x) });
-    } else spd.appendChild(empty("无速度分布数据"));
+      chartBar(spd, ks.map(k => k + " kn"), ks.map(k => map[k]),
+        { yName: "点数", rotate: true, labelFmt: x => FMT.big(x) });
+    } else spd.appendChild(empty(v.median_sog === null || v.median_sog === undefined
+      ? "该目标无有效 SOG（基站 / 助航设备等发送 AIS 的固定站台）" : "无速度分布数据"));
 
     /* 航向玫瑰 */
     const ch = (data.cog_hist || []).filter(r => String(r.mmsi) === String(v.mmsi));
@@ -152,45 +165,64 @@ export async function render(view) {
     } else {
       // 该船不在 TOP12 明细范围内时给出提示
       hr.appendChild(el("div", { class: "note" },
-        "逐小时明细仅对前 12 艘船计算（为控制结果体积）。选择列表靠前的船舶可查看曲线。"));
+        "逐小时明细仅对列表中前 100 艘船计算（为控制结果体积）。选择列表靠前的船舶可查看曲线。"));
     }
 
-    /* 多船对比（TOP 8 的归一化雷达） */
-    const top = (data.vessels || []).slice(0, 8);
-    const maxOf = k => Math.max(1e-9, ...top.map(r => Math.abs(Number(r[k]) || 0)));
+    /* 多船对比：以全量画像列表为分母归一化到 0–100 */
+    const pool = (data.vessels || []).filter(r => r.median_sog !== null && r.median_sog !== undefined);
+    const base8 = (pool.length ? pool : (data.vessels || [])).slice(0, 6);
+    const maxOf = k => Math.max(1e-9, ...(data.vessels || []).map(r => Math.abs(Number(r[k]) || 0)));
     const indicators = [
-      { name: "航速", max: 1 },
-      { name: "航程", max: 1 },
-      { name: "活动范围", max: 1 },
-      { name: "航段数", max: 1 },
-      { name: "驻留次数", max: 1 },
+      { name: "航速", max: 100 },
+      { name: "航程", max: 100 },
+      { name: "活动范围", max: 100 },
+      { name: "航段数", max: 100 },
+      { name: "驻留次数", max: 100 },
     ];
-    const series = top.map(r => ({
+    // 归一化：用对数尺度压缩极端值（如同一艘船驻留次数远高于其他船），
+    // 否则高值量级会把其他船的差异压成一条线，雷达图失去对比意义。
+    const norm = (r, k) => {
+      const m = maxOf(k);
+      const x = Math.abs(Number(r[k]) || 0);
+      if (x <= 0) return 0;
+      return Number((Math.log1p(x) / Math.log1p(m) * 100).toFixed(1));
+    };
+    const series = base8.map(r => ({
       name: String(r.name && r.name !== "未知" ? r.name.slice(0, 10) : r.mmsi),
       value: [
-        (Number(r.median_sog) || 0) / (maxOf("median_sog") || 1),
-        (Number(r.distance_km) || 0) / (maxOf("distance_km") || 1),
-        (Number(r.activity_span_km) || 0) / (maxOf("activity_span_km") || 1),
-        (Number(r.segments) || 0) / (maxOf("segments") || 1),
-        (Number(r.stay_count) || 0) / (maxOf("stay_count") || 1),
-      ].map(x => Number((x * 100).toFixed(1))),
+        norm(r, "median_sog"),
+        norm(r, "distance_km"),
+        norm(r, "activity_span_km"),
+        norm(r, "segments"),
+        norm(r, "stay_count"),
+      ],
     }));
-    if (top.length > 1) chartRadar(cmp, indicators, series);
+    if (series.length > 1) chartRadar(cmp, indicators, series);
     else cmp.appendChild(empty("仅 1 艘船，无法对比"));
 
-    /* 单船雷达 */
+    /* 单船雷达：同一下标体系，另外叠加列表均值作参照 */
     const rEl = host.querySelector("#pvRadar");
     if (rEl) {
-      const one = [{
-        name: "本船",
-        value: [
-          Math.min(100, (Number(v.median_sog) || 0) / 20 * 100),
-          Math.min(100, (Number(v.distance_km) || 0) / (maxOf("distance_km") || 1) * 100),
-          Math.min(100, (Number(v.activity_span_km) || 0) / (maxOf("activity_span_km") || 1) * 100),
-          Math.min(100, (Number(v.segments) || 0) / (maxOf("segments") || 1) * 100),
-          Math.min(100, (Number(v.stay_count) || 0) / (maxOf("stay_count") || 1) * 100),
-        ].map(x => Number(x.toFixed(1))),
-      }];
+      const all = data.vessels || [];
+      const avgOf = k => {
+        const xs = all.map(r => Math.abs(Number(r[k]) || 0)).filter(x => x > 0);
+        return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+      };
+      const one = [
+        {
+          name: "本船",
+          value: [
+            norm(v, "median_sog"), norm(v, "distance_km"),
+            norm(v, "activity_span_km"), norm(v, "segments"),
+            norm(v, "stay_count"),
+          ],
+        },
+        {
+          name: "列表均值",
+          value: ["median_sog", "distance_km", "activity_span_km", "segments", "stay_count"]
+            .map(k => norm({ [k]: avgOf(k) }, k)),
+        },
+      ];
       chartRadar(rEl, indicators, one, {});
     }
   }

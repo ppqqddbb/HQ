@@ -89,7 +89,17 @@ export async function render(view) {
     heatBox.innerHTML = "";
     const hEl = el("div", { class: "chart", style: { height: "420px" } });
     heatBox.appendChild(hEl);
-    chartHeatmap(hEl, labels, labels, d.matrix.map((row, i) => row.map((v, j) => [j, i, Number(v)])));
+    chartHeatmap(hEl, labels, labels,
+      d.matrix.map((row, i) => row.map((v, j) => [j, i, Number(v)])), {
+        min: -1, max: 1,
+        // 相关系数的语义是“方向 + 强度”，用发散色阶：红负、蓝正
+        colors: ["#f472b6", "#7c2d4a", "#16233a", "#1e6f9e", "#38bdf8"],
+        showLabel: true,
+        fmt: v => Number(v).toFixed(3),
+        mapFmt: v => Number(v).toFixed(1),
+        yOpt: { axisLabel: { color: "#8fa3bd", fontSize: 10, width: 78, overflow: "truncate" } },
+        xOpt: { axisLabel: { color: "#8fa3bd", fontSize: 10, rotate: 34, width: 78, overflow: "truncate" } },
+      });
 
     /* 边表 */
     edgeBox.innerHTML = "";

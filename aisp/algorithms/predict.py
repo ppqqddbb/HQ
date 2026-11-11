@@ -462,11 +462,18 @@ def run(
 
         # ---- 准入判断 ----
         _p(progress, 0.88, "对比基线与深度学习模型")
+        # 基线取“表现最好的传统模型”，而不是固定顺序，
+        # 否则可能用一个较差的基线抬高 GRU 的相对改善幅度。
         best_base = None
+        best_ade = None
         for name in ("kalman", "cv"):
-            if name in metrics:
-                best_base = name
-                break
+            if name not in metrics:
+                continue
+            ade = metrics[name].get("trimmed_ADE_m")
+            if ade is None:
+                continue
+            if best_ade is None or ade < best_ade:
+                best_base, best_ade = name, float(ade)
         verdict: Dict[str, Any] = {}
         if best_base and "gru" in metrics:
             b = metrics[best_base]["trimmed_ADE_m"]
@@ -481,16 +488,73 @@ def run(
                         "不得以训练 loss 下降作为上线依据。",
             }
 
-        samples = []
+        # ---- 样例轨迹挑选 ----
+        # 要求：① 来自不同航段（不同船舶）；② 优先选取“真实在航行”的窗口，
+        # 因为静止窗口的位移只有几米，画出来看不出形态差异；
+        # ③ 同时选接近中位误差的窗口，避免只展示最差/最好的极端个例。
         test_idx = np.where(test_mask)[0]
-        for i in range(min(6, len(Xt))):
+        test_sog_full = np.array([
+            float(np.nanmean(W["SOG"][i])) if np.isfinite(W["SOG"][i]).any() else 0.0
+            for i in test_idx
+        ])
+        # 用表现最好的模型估计每个窗口的误差，用于挑“代表性”样例
+        ref_model = None
+        for cand_m in ("gru", "kalman", "cv"):
+            if cand_m in preds:
+                ref_model = cand_m
+                break
+        if ref_model is not None:
+            ref_err = np.linalg.norm(preds[ref_model] - Yt, axis=2).mean(axis=1)
+        else:
+            ref_err = np.zeros(len(test_idx))
+        med_err = float(np.median(ref_err)) if len(ref_err) else 0.0
+
+        picked: List[int] = []
+        seen_traj = set()
+        # 只在“在航”窗口里挑，按与中位误差的接近程度排序
+        moving = [r for r in range(len(test_idx)) if test_sog_full[r] >= 2.0]
+        moving.sort(key=lambda r: abs(float(ref_err[r]) - med_err))
+        for rank in moving:
+            if len(picked) >= 6:
+                break
+            tid = W["TID"][int(test_idx[rank])]
+            if tid in seen_traj:
+                continue
+            seen_traj.add(tid)
+            picked.append(int(rank))
+        # 不足 6 个时，用其他航段补齐（仍保证航段不重复）
+        if len(picked) < 6:
+            for rank in range(len(test_idx)):
+                if len(picked) >= 6:
+                    break
+                tid = W["TID"][int(test_idx[rank])]
+                if rank in picked or tid in seen_traj:
+                    continue
+                seen_traj.add(tid)
+                picked.append(rank)
+
+        samples = []
+        for rank in picked:
+            i = int(test_idx[rank])
+            # 以“历史末尾点”为原点，让历史、真值、预测三条线在图上收敛到同一区域，
+            # 否则跨数百公里的整日轨迹会把 30 分钟的预测量级压扁看不见。
+            ox, oy = float(X[i][-1][0]), float(X[i][-1][1])
+
+            def _rel(pts):
+                return [[round(float(p[0]) - ox, 1), round(float(p[1]) - oy, 1)] for p in pts]
+
             samples.append(
                 {
-                    "traj_id": W["TID"][test_idx[i]],
-                    "history": [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in Xt[i]],
-                    "truth": [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in Yt[i]],
+                    "traj_id": W["TID"][i],
+                    "mean_sog_kn": round(float(test_sog_full[rank]), 2),
+                    "ade_m": round(float(ref_err[rank]), 1),
+                    "origin": [round(ox, 1), round(oy, 1)],
+                    "history": _rel(X[i]),
+                    "truth": _rel(Y[i]),
                     "predictions": {
-                        k: [[round(float(q[0]), 1), round(float(q[1]), 1)] for q in v[i]]
+                        # 注意：preds 的维度是测试集局部顺序（与 Xt 对齐），
+                        # 而 i 是全局窗口下标，因此只能用 rank 取预测值。
+                        k: _rel(v[rank])
                         for k, v in preds.items()
                     },
                 }

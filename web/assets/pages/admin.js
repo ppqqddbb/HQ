@@ -103,14 +103,22 @@ export async function render(view) {
       auditBox.appendChild(table([
         { label: "时间", render: r => FMT.ts(r.event_time) },
         { label: "事件", render: r => {
-            const map = { task_create: "创建任务", task_done: "任务完成", task_fail: "任务失败", task_cancel: "任务取消", import: "数据导入" };
-            const c = r.event === "task_fail" ? "bad" : r.event === "task_done" ? "ok" : r.event === "task_cancel" ? "vio" : "";
-            return el("span", { class: "tag " + c }, (map[r.event] || r.event));
+            // 后端字段为 action，兼容旧的 event 字段
+            const act = r.action || r.event || "";
+            const map = {
+              task_create: "创建任务", task_done: "任务完成", task_fail: "任务失败",
+              task_cancel: "任务取消", task_cancelled: "任务取消",
+              import: "数据导入", dataset_import: "数据导入",
+              clean: "数据治理", preflight: "文件预检",
+              config_view: "查看配置",
+            };
+            const c = act.includes("fail") ? "bad" : act.includes("done") ? "ok" : act.includes("cancel") ? "vio" : "";
+            return el("span", { class: "tag " + c }, map[act] || act || "—");
           } },
-        { label: "对象", key: "target" },
+        { label: "对象", render: r => String(r.resource || r.target || "—") },
         { label: "说明", render: r => String(r.detail || "").slice(0, 110) },
-        { label: "结果", render: r => el("span", { class: "tag " + (r.result === "failed" ? "bad" : "") }, r.result || "—") },
-        { label: "操作者", key: "actor" },
+        { label: "结果", render: r => el("span", { class: "tag " + (r.result === "failed" ? "bad" : r.result === "ok" ? "ok" : "") }, r.result || "—") },
+        { label: "操作者", render: r => String(r.user_id || r.actor || "—") },
       ], rows, { tall: true }));
     } catch (e) {
       auditBox.innerHTML = "";

@@ -80,10 +80,14 @@ def vessel_profile(
         base = base.merge(circ, on="mmsi", how="left")
 
         _p(progress, 0.5, "计算航程与活动范围")
+        # 说明：航程只统计“位移隐含速度不超过 60 kn”的相邻点对，避免 GPS 漂移
+        # （如基站/系泊设备的定位抖动）把累计航程放大成天文数字；
+        # avg_speed_kn 采用“有效位移总里程 / 有效位移总时长”的加权均值，
+        # 单位换算：m/s -> kn 的系数为 1.943844。
         ext = con.execute(
             f"""
-            WITH s AS (
-                SELECT traj_id, mmsi,
+            WITH step AS (
+                SELECT mmsi,
                        2 * 6371008.8 * asin(least(1.0, sqrt(
                          pow(sin(radians(lat - lag(lat) OVER w) / 2), 2) +
                          cos(radians(lag(lat) OVER w)) * cos(radians(lat)) *
@@ -91,10 +95,14 @@ def vessel_profile(
                        date_diff('second', lag(event_time) OVER w, event_time) AS dt
                 FROM clean_points WHERE {where}
                 WINDOW w AS (PARTITION BY mmsi ORDER BY event_time)
+            ), valid AS (
+                SELECT mmsi, d, dt FROM step
+                WHERE dt > 0 AND dt <= 3600 AND d IS NOT NULL AND d / dt * 1.943844 <= 60.0
             )
-            SELECT mmsi, round(sum(CASE WHEN dt > 0 AND dt < 3600 THEN d ELSE 0 END)/1000.0, 1) AS distance_km,
-                   round(sum(CASE WHEN dt > 0 AND dt < 86400 THEN d*1.0/1000.0*3600.0/dt ELSE 0 END)/3.6, 1) AS avg_speed_kn
-            FROM s GROUP BY mmsi
+            SELECT mmsi,
+                   round(sum(d) / 1000.0, 1) AS distance_km,
+                   round(sum(d) / nullif(sum(dt), 0) * 1.943844, 2) AS avg_speed_kn
+            FROM valid GROUP BY mmsi
             """
         ).fetchdf()
         base = base.merge(ext, on="mmsi", how="left")
@@ -127,9 +135,9 @@ def vessel_profile(
         ).round(1)
         prof["turn_rate"] = (prof["segments"] / prof["active_days"].replace(0, np.nan)).round(2)
 
-        # 单船明细（画雷达/曲线用）
+        # 单船明细（画雷达/曲线用）：与 hist 同步扩到 100 艘，结果体积仍然很小
         detail: List[Dict[str, Any]] = []
-        for r in prof.head(12).itertuples():
+        for r in prof.head(100).itertuples():
             hh = hourly[hourly["mmsi"] == r.mmsi].sort_values("h")
             dd = dow[dow["mmsi"] == r.mmsi].sort_values("d")
             detail.append(
@@ -141,7 +149,12 @@ def vessel_profile(
             )
 
         _p(progress, 0.85, "计算速度/航向分布")
-        hist_target = prof["mmsi"].head(6).tolist()
+        # 只对“有有效航速记录”的头部船舶计算分布，避免把无 SOG 的基站/AtoN 混进来；
+        # 上限 100 艘，保证前端选中任意列表船只要能看到自己的分布，同时控制结果体积。
+        hist_pool = prof[prof["median_sog"].notna()]
+        hist_target = hist_pool["mmsi"].head(100).tolist()
+        if not hist_target:
+            hist_target = prof["mmsi"].head(100).tolist()
         if hist_target:
             lst = ",".join("'" + str(m).replace("'", "''") + "'" for m in hist_target)
             spd = con.execute(
