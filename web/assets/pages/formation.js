@@ -152,7 +152,13 @@ export async function render(view) {
         { label: "航速差", num: true, render: r => (r.delta_sog ?? 0).toFixed(2) + " kn" },
         { label: "航向差", num: true, render: r => (r.delta_cog ?? 0).toFixed(1) + "°" },
         { label: "对齐步数", num: true, render: r => FMT.num(r.aligned_steps) },
-        { label: "包围盒间隙", num: true, render: r => r.bbox_m ? FMT.m(r.bbox_m) : "—" },
+        // bbox_m 为 0 表示两条轨迹的包围盒完全重叠（正常情况），
+        // 之前直接写 r.bbox_m ? ... : "—" 会把 0 当成缺失值而显示「—」
+        {
+          label: "包围盒间隙", num: true,
+          render: r => (r.bbox_m === null || r.bbox_m === undefined)
+            ? "—" : (r.bbox_m > 0 ? FMT.m(r.bbox_m) : "0 m（重叠）"),
+        },
       ], pairs.slice(0, 300), { tall: true }));
     } else pairBox.appendChild(empty("无数据"));
 
