@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AIS 船舶航迹数据分析与可视化系统</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">AIS</div>
+      <div class="brand-text">
+        <strong>船舶航迹分析平台</strong>
+        <span>Data · Mining · Visualization</span>
+      </div>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-foot">
+      <div class="dsbox">
+        <label>数据版本</label>
+        <select id="datasetSelect"></select>
+      </div>
+      <div class="stat-mini" id="miniStats"></div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="crumb" id="crumb">总览工作台</div>
+      <div class="topbar-right">
+        <span class="pill" id="healthPill">· 检测中</span>
+        <button class="btn ghost" id="btnRefresh" title="刷新">刷新</button>
+      </div>
+    </header>
+    <div class="content" id="view"></div>
+  </main>
+  <div class="toast" id="toast"></div>
+</div>
+<script src="/vendor/echarts.min.js"></script>
+<script src="/assets/util.js"></script>
+<script src="/assets/charts.js"></script>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>

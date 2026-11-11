@@ -225,9 +225,9 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
 TASK_QUEUES = {
     "ingest": ["ingest", "clean"],
     "spatial": ["hotspot", "staypoint"],
-    "sequence": ["formation", "frequent_route"],
-    "ml-train": ["predict_train"],
-    "ml-infer": ["predict"],
+    "sequence": ["formation", "frequent_route", "vessel_profile", "correlate"],
+    "ml-train": ["predict_train", "predict"],
+    "ml-infer": ["predict_infer"],
     "export": ["export"],
 }
 

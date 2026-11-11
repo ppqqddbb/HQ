@@ -1,0 +1,397 @@
+"""FastAPI 服务：数据集、地图、分析任务与系统接口。
+
+接口约定（技术方案第 14 章）：
+- 耗时分析统一异步：POST 立即返回 task_id，GET 轮询状态，SSE 可选；
+- 大型结果不塞进单次 JSON，通过 /api/v1/tasks/{id}/summary 与文件下载接口获取；
+- 所有接口返回统一结构 pack(...)，包含 request_id、数据版本与错误码。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from . import dataservice, store, tasks
+from .config import settings, default_params, DEFAULT_PARAMS
+from . import ingest as ingest_mod
+
+log = logging.getLogger(__name__)
+app = FastAPI(title="AIS 船舶航迹数据分析与可视化系统", version="1.0.0")
+
+STATUS_CN = {
+    "queued": "排队中", "running": "运行中", "succeeded": "已完成",
+    "failed": "失败", "cancelled": "已取消", "created": "已创建",
+}
+
+
+def pack(data: Any = None, error: Optional[Dict[str, Any]] = None, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    body: Dict[str, Any] = {"request_id": uuid.uuid4().hex[:12], "ok": error is None}
+    if error is None:
+        body["data"] = data
+    else:
+        body["error"] = error
+    if extra:
+        body.update(extra)
+    return body
+
+
+@app.exception_handler(HTTPException)
+async def http_error_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=pack(error={"code": exc.status_code, "message": str(exc.detail)}),
+    )
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    store.init_meta()
+    settings.ensure_dirs()
+    _seed_demo_if_needed()
+
+
+# --------------------------------------------------------------------------- 数据集
+
+class ImportRequest(BaseModel):
+    paths: List[str] = Field(default_factory=list, description="服务器本地 CSV 路径")
+    source_name: str = "ais"
+    mapping: Optional[Dict[str, str]] = None
+    time_format: Optional[str] = None
+    created_by: str = "system"
+    note: str = ""
+    dataset_version: Optional[str] = None
+    clean: bool = True
+    clean_params: Optional[Dict[str, Any]] = None
+
+
+@app.post("/api/v1/datasets/preflight")
+def api_preflight(req: ImportRequest) -> Dict[str, Any]:
+    if not req.paths:
+        raise HTTPException(400, "请提供 CSV 路径")
+    out = []
+    for p in req.paths:
+        try:
+            out.append(ingest_mod.preflight(p))
+        except Exception as exc:
+            out.append({"path": p, "error": str(exc)})
+    return pack(out)
+
+
+@app.post("/api/v1/datasets/import")
+def api_import(req: ImportRequest) -> Dict[str, Any]:
+    if not req.paths:
+        raise HTTPException(400, "请提供 CSV 路径")
+    try:
+        res = ingest_mod.ingest_csv(
+            req.paths, req.source_name, req.mapping, req.created_by, req.note, req.time_format
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"导入失败：{exc}")
+    if req.clean:
+        params = default_params("clean")
+        params.update(req.clean_params or {})
+        dv = req.dataset_version or f"clean_{res['batch_id']}"
+        tid = tasks.create_task("clean", dv, params, {}, req.created_by)
+        tasks.submit(tid, runner=_clean_runner(res["batch_id"], dv, params))
+        res["clean_task_id"] = tid
+        res["dataset_version"] = dv
+    return pack(res)
+
+
+def _clean_runner(batch_id: str, dataset_version: str, params: Dict[str, Any]):
+    from . import clean as clean_mod
+
+    def _fn(dataset_version: str, task_id: str, params: Dict[str, Any], filters: Dict[str, Any],
+            progress=None, **kwargs):
+        return clean_mod.build_clean([batch_id], dataset_version, params, progress)
+
+    return _fn
+
+
+@app.get("/api/v1/datasets")
+def api_datasets() -> Dict[str, Any]:
+    return pack(dataservice.batches())
+
+
+@app.get("/api/v1/datasets/{dataset_version}/profile")
+def api_profile(dataset_version: str) -> Dict[str, Any]:
+    return pack(dataservice.overview(dataset_version))
+
+
+@app.get("/api/v1/datasets/{dataset_version}/quality")
+def api_quality(dataset_version: str) -> Dict[str, Any]:
+    p = settings.clean_root / dataset_version / "quality_report.json"
+    if not p.is_file():
+        raise HTTPException(404, "质量报告不存在")
+    return pack(json.loads(p.read_text(encoding="utf-8")))
+
+
+@app.get("/api/v1/datasets/{dataset_version}/download/{name}")
+def api_download(dataset_version: str, name: str):
+    allowed = {"quality_report.json", "staypoints.parquet", "trajectory_segments.parquet",
+               "bad_records.parquet", "duplicate_audit.parquet"}
+    if name not in allowed:
+        raise HTTPException(400, "不允许下载该文件")
+    p = settings.clean_root / dataset_version / name
+    if not p.is_file():
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(str(p), filename=f"{dataset_version}_{name}")
+
+
+# --------------------------------------------------------------------------- 地图
+
+@app.get("/api/v1/map/overview")
+def api_map_overview(dataset_version: Optional[str] = None) -> Dict[str, Any]:
+    return pack(dataservice.overview(dataset_version))
+
+
+@app.get("/api/v1/map/trajectories")
+def api_map_traj(
+    dataset_version: str,
+    bbox: Optional[str] = None,
+    t0: Optional[str] = None,
+    t1: Optional[str] = None,
+    ship_types: Optional[str] = None,
+    limit: int = 120,
+) -> Dict[str, Any]:
+    f = _filters(bbox, t0, t1, ship_types)
+    return pack(dataservice.trajectories(dataset_version, f, limit=limit))
+
+
+@app.get("/api/v1/map/points")
+def api_map_points(
+    dataset_version: str,
+    bbox: str,
+    zoom: int = 8,
+    t0: Optional[str] = None,
+    t1: Optional[str] = None,
+    ship_types: Optional[str] = None,
+) -> Dict[str, Any]:
+    bb = [float(x) for x in bbox.split(",")]
+    if len(bb) != 4:
+        raise HTTPException(400, "bbox 需要 4 个数值")
+    tr = [t0, t1] if t0 else None
+    st = ship_types.split(",") if ship_types else None
+    return pack(dataservice.points_map(dataset_version, bb, tr, zoom, st))
+
+
+@app.get("/api/v1/vessels")
+def api_vessels(dataset_version: str, bbox: Optional[str] = None, t0: Optional[str] = None,
+                t1: Optional[str] = None, ship_types: Optional[str] = None,
+                limit: int = 500) -> Dict[str, Any]:
+    f = _filters(bbox, t0, t1, ship_types)
+    return pack(dataservice.vessels(dataset_version, f, limit))
+
+
+@app.get("/api/v1/vessels/{mmsi}/trajectory")
+def api_vessel_traj(mmsi: str, dataset_version: str) -> Dict[str, Any]:
+    return pack(dataservice.vessel_track(dataset_version, mmsi))
+
+
+@app.get("/api/v1/staypoints")
+def api_staypoints(dataset_version: str, limit: int = 3000) -> Dict[str, Any]:
+    return pack(dataservice.staypoints(dataset_version, limit))
+
+
+def _filters(bbox, t0, t1, ship_types) -> Dict[str, Any]:
+    f: Dict[str, Any] = {}
+    if bbox:
+        f["bbox"] = [float(x) for x in bbox.split(",")]
+    if t0 or t1:
+        f["time_range"] = [t0, t1]
+    if ship_types:
+        f["ship_types"] = ship_types.split(",")
+    return f
+
+
+# --------------------------------------------------------------------------- 分析任务
+
+class TaskRequest(BaseModel):
+    algorithm: str
+    dataset_version: Optional[str] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    created_by: str = "system"
+
+
+@app.get("/api/v1/algorithms")
+def api_algorithms() -> Dict[str, Any]:
+    meta = {
+        "hdbscan_hotspot": {"name": "热点区域分析", "queue": "spatial",
+                            "desc": "HDBSCAN 密度聚类识别交通流热点与停留热点"},
+        "vessel_profile": {"name": "船舶目标画像", "queue": "sequence",
+                           "desc": "速度、航向、活动范围、驻留与时间行为统计"},
+        "correlate": {"name": "属性关联分析", "queue": "sequence",
+                      "desc": "以船舶为单位的相关矩阵、BH 校正与滞后关系"},
+        "formation_dtw": {"name": "船舶编群分析", "queue": "sequence",
+                          "desc": "DTW + 层次聚类识别同一时段共同航行船舶"},
+        "frequent_route": {"name": "频繁轨迹挖掘", "queue": "sequence",
+                           "desc": "规则网格、有向转移与连续网格序列（频繁航线）"},
+        "predict": {"name": "航迹预测", "queue": "ml-train",
+                    "desc": "CV/Kalman 基线与 GRU 模型，ADE/FDE/P90 评估"},
+        "clean": {"name": "数据处理", "queue": "ingest",
+                  "desc": "去重、异常标记、轨迹切分与质量评分"},
+    }
+    return pack([
+        {"algorithm": k, **v, "default_params": DEFAULT_PARAMS.get(k, {})} for k, v in meta.items()
+    ])
+
+
+@app.post("/api/v1/analysis/tasks")
+def api_create_task(req: TaskRequest) -> Dict[str, Any]:
+    dv = req.dataset_version or dataservice._latest_dataset()
+    if not dv:
+        raise HTTPException(400, "没有可用数据集，请先导入 CSV")
+    if req.algorithm not in tasks.RUNNERS and req.algorithm != "clean":
+        tasks._load_runners()
+    tid = tasks.create_task(req.algorithm, dv, req.parameters, req.filters, req.created_by)
+    tasks.submit(tid)
+    return pack({"task_id": tid, "status": "queued", "queue": tasks.get_task(tid)["queue"]})
+
+
+@app.get("/api/v1/tasks")
+def api_tasks(limit: int = 50, status: Optional[str] = None) -> Dict[str, Any]:
+    return pack(tasks.list_tasks(limit, status))
+
+
+@app.get("/api/v1/tasks/{task_id}")
+def api_task(task_id: str) -> Dict[str, Any]:
+    t = tasks.get_task(task_id)
+    if t is None:
+        raise HTTPException(404, "任务不存在")
+    t["status_cn"] = STATUS_CN.get(t["status"], t["status"])
+    return pack(t)
+
+
+@app.get("/api/v1/tasks/{task_id}/summary")
+def api_task_summary(task_id: str) -> Dict[str, Any]:
+    t = tasks.get_task(task_id)
+    if t is None:
+        raise HTTPException(404, "任务不存在")
+    s = tasks.result_summary(task_id)
+    if s is None:
+        raise HTTPException(409, f"任务尚未产出结果（当前状态：{STATUS_CN.get(t['status'], t['status'])}）")
+    return pack(s)
+
+
+@app.get("/api/v1/tasks/{task_id}/files")
+def api_task_files(task_id: str) -> Dict[str, Any]:
+    d = settings.results_root / task_id
+    if not d.is_dir():
+        raise HTTPException(404, "结果目录不存在")
+    files = [
+        {"name": p.name, "size": p.stat().st_size}
+        for p in sorted(d.iterdir()) if p.is_file()
+    ]
+    return pack(files)
+
+
+@app.get("/api/v1/tasks/{task_id}/download/{name}")
+def api_task_download(task_id: str, name: str):
+    d = settings.results_root / task_id
+    p = d / name
+    if not p.is_file() or p.parent != d:
+        raise HTTPException(404, "文件不存在")
+    return FileResponse(str(p), filename=name)
+
+
+@app.post("/api/v1/tasks/{task_id}/cancel")
+def api_cancel(task_id: str) -> Dict[str, Any]:
+    ok = tasks.request_cancel(task_id)
+    if not ok:
+        raise HTTPException(400, "任务无法取消（可能已结束）")
+    return pack({"task_id": task_id, "cancel_requested": True})
+
+
+@app.get("/api/v1/tasks/{task_id}/events")
+def api_task_events(task_id: str) -> StreamingResponse:
+    """SSE 任务状态推送。"""
+
+    async def gen():
+        import asyncio
+
+        last = None
+        for _ in range(3600):
+            t = tasks.get_task(task_id)
+            if t is None:
+                yield "event: error\ndata: {\"message\":\"任务不存在\"}\n\n"
+                return
+            payload = {k: t[k] for k in ("task_id", "status", "progress", "current_stage",
+                                         "error_message")}
+            body = json.dumps(payload, ensure_ascii=False)
+            if body != last:
+                yield f"event: progress\ndata: {body}\n\n"
+                last = body
+            if t["status"] in ("succeeded", "failed", "cancelled"):
+                yield f"event: done\ndata: {body}\n\n"
+                return
+            await asyncio.sleep(1.0)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# --------------------------------------------------------------------------- 系统
+
+@app.get("/api/v1/admin/meta")
+def api_meta() -> Dict[str, Any]:
+    return pack({
+        "data_dictionary": dataservice.data_dictionary(),
+        "queue_limits": tasks.QUEUE_LIMITS,
+        "task_queues": __import__("aisp.config", fromlist=["TASK_QUEUES"]).TASK_QUEUES,
+        "datasets": dataservice._latest_dataset(),
+    })
+
+
+@app.get("/api/v1/admin/audit")
+def api_audit(limit: int = 100) -> Dict[str, Any]:
+    df = store.q("SELECT * FROM audit_log ORDER BY event_time DESC LIMIT ?", [limit])
+    df["event_time"] = df["event_time"].astype(str)
+    return pack(df.to_dict(orient="records"))
+
+
+@app.get("/api/v1/admin/config")
+def api_config() -> Dict[str, Any]:
+    return pack({"settings": settings.as_dict(), "defaults": DEFAULT_PARAMS})
+
+
+@app.get("/api/v1/health")
+def api_health() -> Dict[str, Any]:
+    return pack({"status": "ok", "dataset": dataservice._latest_dataset()})
+
+
+# --------------------------------------------------------------------------- 静态前端
+
+def _mount_static() -> None:
+    web = settings.web_dir
+    if web.is_dir():
+        if (web / "vendor").is_dir():
+            app.mount("/vendor", StaticFiles(directory=str(web / "vendor")), name="vendor")
+        if (web / "assets").is_dir():
+            app.mount("/assets", StaticFiles(directory=str(web / "assets")), name="assets")
+
+        @app.get("/", response_class=HTMLResponse)
+        def index() -> HTMLResponse:
+            idx = web / "index.html"
+            if not idx.is_file():
+                raise HTTPException(404, "前端未构建")
+            return HTMLResponse(idx.read_text(encoding="utf-8"))
+
+
+def _seed_demo_if_needed() -> None:
+    """首次启动时，若 data/ 目录有 CSV 且没有数据集，提示但不自动导入（避免意外长任务）。"""
+    if dataservice._latest_dataset():
+        return
+    csvs = sorted(settings.data_dir.glob("*.csv"))
+    if csvs:
+        log.info("检测到 %d 个 CSV 文件，可通过 POST /api/v1/datasets/import 导入", len(csvs))
+
+
+_mount_static()

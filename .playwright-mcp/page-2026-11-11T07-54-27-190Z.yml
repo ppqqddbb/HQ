@@ -1,0 +1,280 @@
+- generic [ref=f2e2]:
+  - complementary [ref=f2e3]:
+    - generic [ref=f2e4]:
+      - generic [ref=f2e5]: AIS
+      - generic [ref=f2e6]:
+        - strong [ref=f2e7]: 船舶航迹分析平台
+        - generic [ref=f2e8]: Data · Mining · Visualization
+    - navigation [ref=f2e9]:
+      - generic [ref=f2e10]: 分析
+      - link "◉ 总览工作台" [ref=f2e11] [cursor=pointer]:
+        - /url: "#/overview"
+        - generic [ref=f2e12]: ◉
+        - generic [ref=f2e13]: 总览工作台
+      - generic [ref=f2e14]: 数据
+      - link "▤ 文件与批次" [ref=f2e15] [cursor=pointer]:
+        - /url: "#/datacenter"
+        - generic [ref=f2e16]: ▤
+        - generic [ref=f2e17]: 文件与批次
+      - link "⌖ AIS 轨迹地图" [ref=f2e18] [cursor=pointer]:
+        - /url: "#/map"
+        - generic [ref=f2e19]: ⌖
+        - generic [ref=f2e20]: AIS 轨迹地图
+      - generic [ref=f2e21]: 挖掘
+      - link "◈ 热点区域分析" [ref=f2e22] [cursor=pointer]:
+        - /url: "#/hotspot"
+        - generic [ref=f2e23]: ◈
+        - generic [ref=f2e24]: 热点区域分析
+      - link "◐ 船舶目标画像" [ref=f2e25] [cursor=pointer]:
+        - /url: "#/profile"
+        - generic [ref=f2e26]: ◐
+        - generic [ref=f2e27]: 船舶目标画像
+      - link "⬡ 属性关联分析" [ref=f2e28] [cursor=pointer]:
+        - /url: "#/correlate"
+        - generic [ref=f2e29]: ⬡
+        - generic [ref=f2e30]: 属性关联分析
+      - link "⧉ 船舶编群分析" [ref=f2e31] [cursor=pointer]:
+        - /url: "#/formation"
+        - generic [ref=f2e32]: ⧉
+        - generic [ref=f2e33]: 船舶编群分析
+      - link "⇢ 频繁轨迹挖掘" [ref=f2e34] [cursor=pointer]:
+        - /url: "#/routes"
+        - generic [ref=f2e35]: ⇢
+        - generic [ref=f2e36]: 频繁轨迹挖掘
+      - link "◈ 航迹预测" [ref=f2e37] [cursor=pointer]:
+        - /url: "#/predict"
+        - generic [ref=f2e38]: ◈
+        - generic [ref=f2e39]: 航迹预测
+      - generic [ref=f2e40]: 系统
+      - link "⚙ 系统管理" [ref=f2e41] [cursor=pointer]:
+        - /url: "#/admin"
+        - generic [ref=f2e42]: ⚙
+        - generic [ref=f2e43]: 系统管理
+    - generic [ref=f2e44]:
+      - generic [ref=f2e45]:
+        - generic [ref=f2e46]: 数据版本
+        - combobox [ref=f2e47]:
+          - option "clean_v1_test" [selected]
+      - generic [ref=f2e48]:
+        - generic [ref=f2e49]:
+          - text: 点位
+          - generic [ref=f2e50]: 817.0 万
+        - generic [ref=f2e51]:
+          - text: 船舶
+          - generic [ref=f2e52]: 2,446
+        - generic [ref=f2e53]:
+          - text: 航段
+          - generic [ref=f2e54]: 1.5 万
+        - generic [ref=f2e55]:
+          - text: 质量分
+          - generic [ref=f2e56]: "77.5"
+  - main [ref=f2e57]:
+    - generic [ref=f2e58]:
+      - generic [ref=f2e59]: 总览工作台数据概况 · 质量 · 任务状态
+      - generic [ref=f2e60]:
+        - generic [ref=f2e61]: ● 服务正常
+        - button "刷新" [ref=f2e62] [cursor=pointer]
+    - generic [ref=f2e64]:
+      - generic [ref=f2e65]:
+        - generic [ref=f2e66]:
+          - generic [ref=f2e67]: 有效轨迹点
+          - generic [ref=f2e68]: 817.0 万
+          - generic [ref=f2e69]: 原始 1416.6 万 条 · 去重率 41.9%
+        - generic [ref=f2e70]:
+          - generic [ref=f2e71]: 船舶目标（MMSI）
+          - generic [ref=f2e72]: 2,446
+          - generic [ref=f2e73]: 轨迹段 14,630 条
+        - generic [ref=f2e74]:
+          - generic [ref=f2e75]: 数据质量分
+          - generic [ref=f2e76]: 97.2 / 100
+          - generic [ref=f2e77]: 点位平均 77.5 分 · 异常点占比 0.3%
+        - generic [ref=f2e78]:
+          - generic [ref=f2e79]: 覆盖时段
+          - generic [ref=f2e80]: 24.0 小时
+          - generic [ref=f2e81]: 2025-01-01 00:00:00 → 2025-01-01 23:59:58
+      - generic [ref=f2e82]:
+        - heading "逐小时上报量 小时级 · 峰值 35.4 万" [level=3] [ref=f2e84]:
+          - generic [ref=f2e85]: 逐小时上报量
+          - generic [ref=f2e86]: 小时级 · 峰值 35.4 万
+        - heading "船型构成 按轨迹点统计（前 12 类）" [level=3] [ref=f2e91]:
+          - generic [ref=f2e92]: 船型构成
+          - generic [ref=f2e93]: 按轨迹点统计（前 12 类）
+      - generic [ref=f2e97]:
+        - heading "航速分布（SOG） 平均上报 340,438 点/小时" [level=3] [ref=f2e99]:
+          - generic [ref=f2e100]: 航速分布（SOG）
+          - generic [ref=f2e101]: 平均上报 340,438 点/小时
+        - generic [ref=f2e105]:
+          - heading "数据质量维度 综合 97.18 分" [level=3] [ref=f2e106]:
+            - generic [ref=f2e107]: 数据质量维度
+            - generic [ref=f2e108]: 综合 97.18 分
+          - generic [ref=f2e109]:
+            - generic [ref=f2e110]:
+              - generic [ref=f2e111]:
+                - generic "完整性" [ref=f2e112]
+                - generic [ref=f2e113]: "92.4"
+              - generic [ref=f2e114]:
+                - generic "有效性" [ref=f2e115]
+                - generic [ref=f2e116]: "99.3"
+              - generic [ref=f2e117]:
+                - generic "时序连续性" [ref=f2e118]
+                - generic [ref=f2e119]: "99.8"
+              - generic [ref=f2e120]:
+                - generic "空间合理性" [ref=f2e121]
+                - generic [ref=f2e122]: "99.9"
+              - generic [ref=f2e123]:
+                - generic "字段一致性" [ref=f2e124]
+                - generic [ref=f2e125]: "92.9"
+            - generic [ref=f2e126]: 权重：完整性 20% · 有效性 25% · 时序连续性 20% · 空间合理性 20% · 字段一致性 15%
+            - generic [ref=f2e127]: 驻留点 5,275 个 · 有效轨迹段 6,923 / 14,630
+        - generic [ref=f2e128]:
+          - heading "日汇总 按自然日统计点数与船舶数" [level=3] [ref=f2e129]:
+            - generic [ref=f2e130]: 日汇总
+            - generic [ref=f2e131]: 按自然日统计点数与船舶数
+          - generic [ref=f2e132]: 当前仅 1 天数据：2025-01-01，多日数据可展示趋势曲线。
+      - generic [ref=f2e134]:
+        - generic [ref=f2e135]:
+          - heading "最快船舶 TOP10 按单点最大 SOG 排序" [level=3] [ref=f2e136]:
+            - generic [ref=f2e137]: 最快船舶 TOP10
+            - generic [ref=f2e138]: 按单点最大 SOG 排序
+          - table [ref=f2e141]:
+            - rowgroup [ref=f2e142]:
+              - row [ref=f2e143]:
+                - columnheader "MMSI" [ref=f2e144]
+                - columnheader "船名" [ref=f2e145]
+                - columnheader "船型" [ref=f2e146]
+                - columnheader "最大 SOG" [ref=f2e147]
+                - columnheader "点数" [ref=f2e148]
+            - rowgroup [ref=f2e149]:
+              - row [ref=f2e150]:
+                - cell "111265586" [ref=f2e151]
+                - cell "LIFEGUARD 006" [ref=f2e152]
+                - cell "Undefined" [ref=f2e153]
+                - cell "150.0 kn" [ref=f2e154]
+                - cell "457" [ref=f2e155]
+              - row [ref=f2e156]:
+                - cell "111257007" [ref=f2e157]
+                - cell "未知" [ref=f2e158]
+                - cell "Undefined" [ref=f2e159]
+                - cell "146.0 kn" [ref=f2e160]
+                - cell "2" [ref=f2e161]
+              - row [ref=f2e162]:
+                - cell "111265582" [ref=f2e163]
+                - cell "LIFEGUARD 002" [ref=f2e164]
+                - cell "Undefined" [ref=f2e165]
+                - cell "140.0 kn" [ref=f2e166]
+                - cell "528" [ref=f2e167]
+              - row [ref=f2e168]:
+                - cell "111257014" [ref=f2e169]
+                - cell "未知" [ref=f2e170]
+                - cell "Undefined" [ref=f2e171]
+                - cell "117.0 kn" [ref=f2e172]
+                - cell "46" [ref=f2e173]
+              - row [ref=f2e174]:
+                - cell "111219516" [ref=f2e175]
+                - cell "未知" [ref=f2e176]
+                - cell "Undefined" [ref=f2e177]
+                - cell "102.2 kn" [ref=f2e178]
+                - cell "2,092" [ref=f2e179]
+              - row [ref=f2e180]:
+                - cell "111219515" [ref=f2e181]
+                - cell "未知" [ref=f2e182]
+                - cell "Undefined" [ref=f2e183]
+                - cell "102.2 kn" [ref=f2e184]
+                - cell "5,137" [ref=f2e185]
+              - row [ref=f2e186]:
+                - cell "111219518" [ref=f2e187]
+                - cell "未知" [ref=f2e188]
+                - cell "Undefined" [ref=f2e189]
+                - cell "102.2 kn" [ref=f2e190]
+                - cell "1,792" [ref=f2e191]
+              - row [ref=f2e192]:
+                - cell "912191373" [ref=f2e193]
+                - cell "MOONSHINE" [ref=f2e194]
+                - cell "Pleasure" [ref=f2e195]
+                - cell "102.2 kn" [ref=f2e196]
+                - cell "687" [ref=f2e197]
+              - row [ref=f2e198]:
+                - cell "352003314" [ref=f2e199]
+                - cell "OSCAR I" [ref=f2e200]
+                - cell "Undefined" [ref=f2e201]
+                - cell "75.9 kn" [ref=f2e202]
+                - cell "8,471" [ref=f2e203]
+              - row [ref=f2e204]:
+                - cell "255802950" [ref=f2e205]
+                - cell "CGAS MONARCH" [ref=f2e206]
+                - cell "Undefined" [ref=f2e207]
+                - cell "63.0 kn" [ref=f2e208]
+                - cell "1,451" [ref=f2e209]
+        - generic [ref=f2e210]:
+          - heading "数据资产 最近 10 个数据集版本" [level=3] [ref=f2e211]:
+            - generic [ref=f2e212]: 数据资产
+            - generic [ref=f2e213]: 最近 10 个数据集版本
+          - table [ref=f2e216]:
+            - rowgroup [ref=f2e217]:
+              - row [ref=f2e218]:
+                - columnheader "版本" [ref=f2e219]
+                - columnheader "点数" [ref=f2e220]
+                - columnheader "船舶" [ref=f2e221]
+                - columnheader "创建时间" [ref=f2e222]
+            - rowgroup [ref=f2e223]:
+              - row [ref=f2e224]:
+                - cell "clean_v1_test" [ref=f2e225]
+                - cell "817.0 万" [ref=f2e226]
+                - cell "2,446" [ref=f2e227]
+                - cell "2026-11-11 06:53:16" [ref=f2e228]
+        - generic [ref=f2e229]:
+          - heading "任务状态 按状态汇总" [level=3] [ref=f2e230]:
+            - generic [ref=f2e231]: 任务状态
+            - generic [ref=f2e232]: 按状态汇总
+          - generic [ref=f2e233]:
+            - generic [ref=f2e235]:
+              - generic "已完成" [ref=f2e236]
+              - generic [ref=f2e239]: "1"
+            - table [ref=f2e242]:
+              - rowgroup [ref=f2e243]:
+                - row [ref=f2e244]:
+                  - columnheader "算法" [ref=f2e245]
+                  - columnheader "状态" [ref=f2e246]
+                  - columnheader "进度" [ref=f2e247]
+                  - columnheader "创建" [ref=f2e248]
+              - rowgroup [ref=f2e249]:
+                - row [ref=f2e250]:
+                  - cell "目标画像" [ref=f2e251]
+                  - cell "已完成" [ref=f2e252]
+                  - cell "100%" [ref=f2e254]
+                  - cell "2026-11-11 07:35:56" [ref=f2e255]
+      - generic [ref=f2e256]:
+        - heading "分析结果直达 点击卡片进入对应分析页（自动载入最近结果）" [level=3] [ref=f2e257]:
+          - generic [ref=f2e258]: 分析结果直达
+          - generic [ref=f2e259]: 点击卡片进入对应分析页（自动载入最近结果）
+        - generic [ref=f2e260]:
+          - generic [ref=f2e261] [cursor=pointer]:
+            - heading "热点区域分析 HDBSCAN 密度聚类" [level=3] [ref=f2e262]:
+              - generic [ref=f2e263]: 热点区域分析
+              - generic [ref=f2e264]: HDBSCAN 密度聚类
+            - generic [ref=f2e265]: 尚未运行，点击进入并发起分析
+          - generic [ref=f2e266] [cursor=pointer]:
+            - heading "船舶目标画像 速度 / 航向 / 活动范围" [level=3] [ref=f2e267]:
+              - generic [ref=f2e268]: 船舶目标画像
+              - generic [ref=f2e269]: 速度 / 航向 / 活动范围
+            - generic [ref=f2e270]: 最近运行：2026-11-11 07:35:56 · 耗时 —
+          - generic [ref=f2e271] [cursor=pointer]:
+            - heading "属性关联分析 相关矩阵 + BH 校正" [level=3] [ref=f2e272]:
+              - generic [ref=f2e273]: 属性关联分析
+              - generic [ref=f2e274]: 相关矩阵 + BH 校正
+            - generic [ref=f2e275]: 尚未运行，点击进入并发起分析
+          - generic [ref=f2e276] [cursor=pointer]:
+            - heading "船舶编群分析 DTW + 层次聚类" [level=3] [ref=f2e277]:
+              - generic [ref=f2e278]: 船舶编群分析
+              - generic [ref=f2e279]: DTW + 层次聚类
+            - generic [ref=f2e280]: 尚未运行，点击进入并发起分析
+          - generic [ref=f2e281] [cursor=pointer]:
+            - heading "频繁轨迹挖掘 网格 / 转移 / 航线" [level=3] [ref=f2e282]:
+              - generic [ref=f2e283]: 频繁轨迹挖掘
+              - generic [ref=f2e284]: 网格 / 转移 / 航线
+            - generic [ref=f2e285]: 尚未运行，点击进入并发起分析
+          - generic [ref=f2e286] [cursor=pointer]:
+            - heading "航迹预测 CV / Kalman / GRU" [level=3] [ref=f2e287]:
+              - generic [ref=f2e288]: 航迹预测
+              - generic [ref=f2e289]: CV / Kalman / GRU
+            - generic [ref=f2e290]: 尚未运行，点击进入并发起分析
