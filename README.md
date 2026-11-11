@@ -345,7 +345,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | 轨迹段 / 可用段 | 14,655 / 7,287 |
 | 驻留点 | 5,506 |
 | 综合质量分 | **96.90**（有效性 92.14） |
-| 异常标记 | SPEED_SPIKE 7,299 / JUMP 14,235 / GPS_DRIFT 12,479 / **FROZEN_GPS 6,186** |
+| 异常标记 | SPEED_SPIKE 7,299 / JUMP 13,875 / GPS_DRIFT 12,479 / **FROZEN_GPS 6,186** |
 | 航迹预测 | 28,809 窗口；截尾 ADE：CV 1.87 km / **GRU 347 m**（改善 81.43%） |
 
 **FROZEN_GPS（冻结/卡死 GPS）**：位置逐位不变却持续报告航行速度的设备故障。
