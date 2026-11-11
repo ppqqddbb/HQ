@@ -211,27 +211,37 @@ def trajectories(
 
 def points_map(
     dataset_version: str,
-    bbox: List[float],
+    bbox: Optional[List[float]],
     time_range: Optional[List[str]] = None,
     zoom: int = 8,
     ship_types: Optional[List[str]] = None,
     max_points: int = 30000,
+    polygon: Optional[List[List[float]]] = None,
+    circle: Optional[List[float]] = None,
 ) -> Dict[str, Any]:
-    """按视口与缩放级别返回聚合点（WebGL 友好的轻量结构）。"""
+    """按视口与缩放级别返回聚合点（WebGL 友好的轻量结构）。
+
+    ``bbox`` 是视口范围内的粗筛；``polygon`` / ``circle`` 是用户框选或圈选的
+    精确范围（技术方案 11.2），会把过滤条件下推到 SQL 后再聚合。
+    """
     res = max(0.002, 0.6 / (2 ** max(0, zoom - 4)))
     con = open_dataset(dataset_version)
     try:
-        conds = [
-            f"lon BETWEEN {bbox[0]!r} AND {bbox[2]!r}",
-            f"lat BETWEEN {bbox[1]!r} AND {bbox[3]!r}",
-        ]
+        conds = []
+        if bbox and len(bbox) == 4:
+            conds.append(f"lon BETWEEN {float(bbox[0])!r} AND {float(bbox[2])!r}")
+            conds.append(f"lat BETWEEN {float(bbox[1])!r} AND {float(bbox[3])!r}")
         if time_range and len(time_range) == 2 and time_range[0]:
             conds.append(f"event_time >= CAST('{time_range[0]}' AS TIMESTAMP)")
             conds.append(f"event_time < CAST('{time_range[1]}' AS TIMESTAMP)")
         if ship_types:
             lst = ",".join("'" + s.replace("'", "''") + "'" for s in ship_types)
             conds.append(f"ship_type IN ({lst})")
-        w = " AND ".join(conds)
+        # 空间精确筛选复用统一的 Filter，保证与轨迹/船舶列表口径一致
+        spatial = Filter({"polygon": polygon, "circle": circle})
+        if spatial.polygon or spatial.circle:
+            conds.append(spatial.where())
+        w = " AND ".join(conds) if conds else "TRUE"
         df = con.execute(
             f"""
             SELECT round(floor(lon/{res})*{res} + {res}/2, 4) AS lon,

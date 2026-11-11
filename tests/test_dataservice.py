@@ -81,3 +81,46 @@ def test_points_map_aggregates_inside_bbox(small_dataset):
         assert 9.9 <= p["lon"] <= 10.7
         assert 54.9 <= p["lat"] <= 55.4
     assert sum(p["n"] for p in out["points"]) > 0
+
+
+# ------------------------------------------------------------------ 11.2 空间筛选
+
+def test_trajectories_respect_polygon_filter(small_dataset):
+    """多边形（射线法）必须下推到 SQL：只包住前 1/4 航迹的多边形，
+    其轨迹条数/点数应明显小于全量，而完全在外的多边形应为 0。"""
+    # 600 个点沿 lon 从 10.0 递增到 10.599，lat 从 55.0 到 55.2995
+    inside_poly = [[9.99, 54.99], [10.16, 54.99], [10.16, 55.09], [9.99, 55.09]]
+    out = dataservice.trajectories(small_dataset, {"polygon": inside_poly})
+    assert out["count"] == 1
+    n_inside = out["features"][0]["properties"]["points"]
+    assert 0 < n_inside < 600, "多边形内的点数应少于全量"
+
+    outside_poly = [[20.0, 60.0], [21.0, 60.0], [21.0, 61.0], [20.0, 61.0]]
+    assert dataservice.trajectories(small_dataset, {"polygon": outside_poly})["count"] == 0
+
+
+def test_circle_filter_is_km_based(small_dataset):
+    """圆形半径单位为 km：20 km 圈住航迹前半段，1 km 只圈住起点附近。"""
+    narrow = dataservice.trajectories(small_dataset, {"circle": [10.0, 55.0, 1.0]})
+    wide = dataservice.trajectories(small_dataset, {"circle": [10.0, 55.0, 20.0]})
+    assert narrow["count"] == 1 and wide["count"] == 1
+    n_narrow = narrow["features"][0]["properties"]["points"]
+    n_wide = wide["features"][0]["properties"]["points"]
+    assert n_narrow < n_wide, "半径越大应包含越多点"
+    assert n_wide < 600
+    # 跑出圈外的圆形应为空
+    assert dataservice.trajectories(small_dataset, {"circle": [30.0, 70.0, 5.0]})["count"] == 0
+
+
+def test_points_map_supports_polygon_without_bbox(small_dataset):
+    """只给多边形（不给视口 bbox）也要能聚合，便于前端纯框选模式。"""
+    poly = [[9.99, 54.99], [10.20, 54.99], [10.20, 55.10], [9.99, 55.10]]
+    out = dataservice.points_map(small_dataset, None, zoom=8, polygon=poly)
+    assert out["points"]
+    total = sum(p["n"] for p in out["points"])
+    assert 0 < total < 600
+    # 注意：聚合格坐标是「网格中心」，可能落在多边形外半格，
+    # 所以只验证大致范围，不要求严格在多边形内。
+    for p in out["points"]:
+        assert 9.95 <= p["lon"] <= 10.25
+        assert 54.95 <= p["lat"] <= 55.15

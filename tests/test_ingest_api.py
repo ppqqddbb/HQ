@@ -283,3 +283,45 @@ def test_upload_endpoint_hides_path_traversal_filename(tmp_path, monkeypatch):
     assert r.status_code == 200
     p = Path(r.json()["data"]["paths"][0]).resolve()
     assert p.parent == up.resolve(), "上传文件必须落在 uploads 目录内"
+
+
+# ------------------------------------------------- 11.2 空间筛选参数解析（API 契约）
+
+def test_map_points_rejects_bad_polygon_json(client):
+    r = client.get("/api/v1/map/points", params={
+        "dataset_version": "clean_x", "polygon": "not-a-json"})
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False
+    assert "polygon" in body["error"]["message"]
+
+
+def test_map_points_rejects_polygon_with_two_vertices(client):
+    r = client.get("/api/v1/map/points", params={
+        "dataset_version": "clean_x", "polygon": "[[1,2],[3,4]]"})
+    assert r.status_code == 400
+    assert "3 个顶点" in r.json()["error"]["message"]
+
+
+def test_map_points_rejects_non_positive_circle_radius(client):
+    r = client.get("/api/v1/map/points", params={
+        "dataset_version": "clean_x", "circle": "10.0,55.0,0"})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == 400
+
+
+def test_map_points_rejects_bad_bbox(client):
+    r = client.get("/api/v1/map/points", params={
+        "dataset_version": "clean_x", "bbox": "1,2,3"})
+    assert r.status_code == 400
+
+
+def test_map_points_accepts_polygon_and_circle_together(client):
+    """参数解析通过后，面对不存在的数据集应返回 404（而不是 400 参数错或 500）。"""
+    r = client.get("/api/v1/map/points", params={
+        "dataset_version": "clean_not_exists",
+        "polygon": "[[9.9,54.9],[10.2,54.9],[10.2,55.2],[9.9,55.2]]",
+        "circle": "10.0,55.0,10",
+    })
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == 404

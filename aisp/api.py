@@ -221,6 +221,13 @@ def api_download(dataset_version: str, name: str):
 
 # --------------------------------------------------------------------------- 地图
 
+def _require_dataset(dataset_version: str) -> None:
+    """地图类查询的前置校验：数据集未治理完成时直接 404，
+    否则 DuckDB 会抛 IO Error（变成 500，前端无法区分「参数错」还是「数据集不存在」）。"""
+    if not dataservice.dataset_exists(dataset_version):
+        raise HTTPException(404, f"数据集 {dataset_version} 不存在或尚未完成治理")
+
+
 @app.get("/api/v1/map/overview")
 def api_map_overview(dataset_version: Optional[str] = None) -> Dict[str, Any]:
     return pack(dataservice.overview(dataset_version))
@@ -233,55 +240,112 @@ def api_map_traj(
     t0: Optional[str] = None,
     t1: Optional[str] = None,
     ship_types: Optional[str] = None,
+    polygon: Optional[str] = None,
+    circle: Optional[str] = None,
     limit: int = 120,
 ) -> Dict[str, Any]:
-    f = _filters(bbox, t0, t1, ship_types)
+    f = _filters(bbox, t0, t1, ship_types, polygon, circle)
+    _require_dataset(dataset_version)
     return pack(dataservice.trajectories(dataset_version, f, limit=limit))
 
 
 @app.get("/api/v1/map/points")
 def api_map_points(
     dataset_version: str,
-    bbox: str,
+    bbox: Optional[str] = None,
     zoom: int = 8,
     t0: Optional[str] = None,
     t1: Optional[str] = None,
     ship_types: Optional[str] = None,
+    polygon: Optional[str] = None,
+    circle: Optional[str] = None,
 ) -> Dict[str, Any]:
-    bb = [float(x) for x in bbox.split(",")]
-    if len(bb) != 4:
-        raise HTTPException(400, "bbox 需要 4 个数值")
+    bb = _parse_bbox(bbox)
     tr = [t0, t1] if t0 else None
     st = ship_types.split(",") if ship_types else None
-    return pack(dataservice.points_map(dataset_version, bb, tr, zoom, st))
+    poly = _parse_polygon(polygon)
+    circ = _parse_circle(circle)
+    _require_dataset(dataset_version)
+    return pack(dataservice.points_map(
+        dataset_version, bb, tr, zoom, st, polygon=poly, circle=circ))
 
 
 @app.get("/api/v1/vessels")
 def api_vessels(dataset_version: str, bbox: Optional[str] = None, t0: Optional[str] = None,
                 t1: Optional[str] = None, ship_types: Optional[str] = None,
+                polygon: Optional[str] = None, circle: Optional[str] = None,
                 limit: int = 500) -> Dict[str, Any]:
-    f = _filters(bbox, t0, t1, ship_types)
+    f = _filters(bbox, t0, t1, ship_types, polygon, circle)
+    _require_dataset(dataset_version)
     return pack(dataservice.vessels(dataset_version, f, limit))
 
 
 @app.get("/api/v1/vessels/{mmsi}/trajectory")
 def api_vessel_traj(mmsi: str, dataset_version: str) -> Dict[str, Any]:
+    _require_dataset(dataset_version)
     return pack(dataservice.vessel_track(dataset_version, mmsi))
 
 
 @app.get("/api/v1/staypoints")
 def api_staypoints(dataset_version: str, limit: int = 3000) -> Dict[str, Any]:
+    _require_dataset(dataset_version)
     return pack(dataservice.staypoints(dataset_version, limit))
 
 
-def _filters(bbox, t0, t1, ship_types) -> Dict[str, Any]:
+def _parse_bbox(bbox: Optional[str]) -> Optional[List[float]]:
+    if not bbox:
+        return None
+    try:
+        bb = [float(x) for x in bbox.split(",")]
+    except ValueError:
+        raise HTTPException(400, "bbox 必须是逗号分隔的数值")
+    if len(bb) != 4:
+        raise HTTPException(400, "bbox 需要 4 个数值")
+    return bb
+
+
+def _parse_polygon(raw: Optional[str]) -> Optional[List[List[float]]]:
+    """解析多边形：前端传 ``[[lon,lat],...]`` 的 JSON。至少 3 个顶点。"""
+    if not raw:
+        return None
+    try:
+        pts = json.loads(raw)
+        pts = [[float(p[0]), float(p[1])] for p in pts]
+    except (ValueError, TypeError, IndexError):
+        raise HTTPException(400, "polygon 需为 [[lon,lat],...] 形式的 JSON 数组")
+    if len(pts) < 3:
+        raise HTTPException(400, "polygon 至少需要 3 个顶点")
+    return pts
+
+
+def _parse_circle(raw: Optional[str]) -> Optional[List[float]]:
+    """解析圆形：``lon,lat,radius_km``。"""
+    if not raw:
+        return None
+    try:
+        c = [float(x) for x in raw.split(",")]
+    except ValueError:
+        raise HTTPException(400, "circle 必须是逗号分隔的数值")
+    if len(c) != 3 or c[2] <= 0:
+        raise HTTPException(400, "circle 需要 lon,lat,radius_km 且半径大于 0")
+    return c
+
+
+def _filters(bbox, t0, t1, ship_types, polygon=None, circle=None) -> Dict[str, Any]:
     f: Dict[str, Any] = {}
-    if bbox:
-        f["bbox"] = [float(x) for x in bbox.split(",")]
+    bb = _parse_bbox(bbox)
+    if bb:
+        f["bbox"] = bb
     if t0 or t1:
         f["time_range"] = [t0, t1]
     if ship_types:
         f["ship_types"] = ship_types.split(",")
+    poly = _parse_polygon(polygon)
+    if poly:
+        f["polygon"] = poly
+    circ = _parse_circle(circle)
+    if circ:
+        f["circle"] = circ
     return f
 
 

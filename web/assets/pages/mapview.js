@@ -44,6 +44,7 @@ function stopPlay() {
 /** 路由切换时释放地图资源 */
 export function destroy() {
   stopPlay();
+  if (map && map.__cleanup) { try { map.__cleanup(); } catch (e) { } }
   if (map && map.destroy) { try { map.destroy(); } catch (e) { } }
   map = null;
   play.pts = [];
@@ -69,9 +70,17 @@ export async function render(view) {
   const chkHeat = el("input", { type: "checkbox" }); chkHeat.checked = true;
   const chkStay = el("input", { type: "checkbox" }); chkStay.checked = false;
 
-  /* 空间筛选开关：开启后在地图上按住拖拽框选矩形范围 */
-  const chkFence = el("input", { type: "checkbox" });
+  /* 空间筛选：pickMode = none | rect | poly | circle
+     - rect  ：按住拖拽得到矩形 bbox
+     - poly  ：逐点点击，双击/回车闭合多边形
+     - circle：按住拖拽得到圆形（圆心 = 起点，半径 = 拖拽距离） */
+  const pickModeSel = el("select", { style: { minWidth: "96px" } },
+    el("option", { value: "none" }, "不筛选"),
+    el("option", { value: "rect" }, "矩形"),
+    el("option", { value: "poly" }, "多边形"),
+    el("option", { value: "circle" }, "圆形"));
   const fenceInfo = el("span", { class: "tag", style: { display: "none" } }, "");
+  const resetFenceBtn = el("button", { class: "btn sm ghost", style: { display: "none" } }, "\u6e05\u9664\u8303\u56f4");
 
   const toolbar = el("div", { class: "toolbar" },
     el("div", { class: "field" }, el("label", {}, "船型筛选"), typeSel.node),
@@ -81,8 +90,8 @@ export async function render(view) {
     el("div", { class: "field" }, el("label", {}, "轨迹线"), chkTraj),
     el("div", { class: "field" }, el("label", {}, "密度点"), chkHeat),
     el("div", { class: "field" }, el("label", {}, "驻留点"), chkStay),
-    el("div", { class: "field" }, el("label", {}, "框选范围"), chkFence),
-    fenceInfo,
+    el("div", { class: "field" }, el("label", {}, "空间筛选"), pickModeSel),
+    fenceInfo, resetFenceBtn,
     applyBtn);
   view.appendChild(toolbar);
 
@@ -96,7 +105,7 @@ export async function render(view) {
       el("span", { class: "tag warn" }, "驻留点"), " ",
       el("span", { class: "tag ok" }, "已回放")),
     el("div", { style: { marginTop: "2px", color: "#8fa3bd" } },
-      "勾选「框选范围」后在地图上拖拽可限定区域"));
+      "空间筛选支持矩形拖拽 / 多边形逐点点击（双击闭合）/ 圆形拖拽"));
   /* 回放控制条（浮于地图右下角） */
   const playBtn = el("button", { class: "btn sm primary", disabled: true, style: { minWidth: "58px" } }, "播放");
   play.btn = playBtn;
@@ -139,6 +148,10 @@ export async function render(view) {
   let lastPoints = null;
   let lastStay = null;
 
+  /* 叠加图层（多边形预览 / 圆形预览 / 已确认筛区）。
+     先建空数组再在下面 push，避免 repaint() 在常量定义前被调用时触发 TDZ。 */
+  const overlayLayers = [];
+
   /* 回放图层：常驻在图层栈顶端，无回放数据时不绘制 */
   const playLayer = { paint: paintPlayback };
 
@@ -159,6 +172,7 @@ export async function render(view) {
       }));
     }
     layers.push(playLayer);
+    for (const ly of overlayLayers) layers.push(ly);
     map.setLayers(layers);
   }
 
@@ -323,23 +337,148 @@ export async function render(view) {
     return f;
   };
 
-  /* ---------- 矩形框选（空间筛选） ---------- */
+  /* ---------- 空间筛选（矩形 / 多边形 / 圆形，技术方案 11.2） ----------
+     三种模式共用一套拖拽/点击交互，区别只在最终生成的过滤参数：
+     - rect   → bbox=[minLon,minLat,maxLon,maxLat]
+     - poly   → polygon=[[lon,lat],...]（逐点点击，双击闭合）
+     - circle → circle=[lon,lat,radius_km]
+     所有参数都下推到后端 SQL（射线法 / 等距投影近似），不是前端假过滤。 */
 
-  let fenceBBox = null;          // [minLon, minLat, maxLon, maxLat]
+  let fenceBBox = null;          // 矩形：[minLon, minLat, maxLon, maxLat]
+  let fencePoly = null;          // 多边形：[[lon, lat], ...]
+  let fenceCircle = null;        // 圆形：[lon, lat, radiusKm]
   let dragging = false;
   let dragStart = null;          // [x, y] 屏幕坐标
+  let polyPts = [];              // 绘制中的多边形顶点（经纬度）
+  let polyHover = null;          // 多边形绘制鼠标位置（橡皮筋预览）
+  let lastPtScreen = null;       // 上一个顶点的屏幕坐标，用于去重双击重复点
   const selDiv = el("div", { class: "map-select" });
   selDiv.style.display = "none";
   mapBox.appendChild(selDiv);
 
-  /* 捕获阶段在容器上拦截：框选模式下禁止地图平移。
+  const pickMode = () => pickModeSel.value;
+  const hasFence = () => !!(fenceBBox || fencePoly || fenceCircle);
+
+  /** 把当前空间筛选追加到查询参数上；供轨迹/点/船舶三个接口统一使用。 */
+  const appendFence = (qs) => {
+    if (fenceBBox) qs.set("bbox", fenceBBox.map(v => v.toFixed(5)).join(","));
+    if (fencePoly) qs.set("polygon", JSON.stringify(fencePoly.map(p => [+p[0].toFixed(5), +p[1].toFixed(5)])));
+    if (fenceCircle) qs.set("circle", fenceCircle.map(v => +Number(v).toFixed(5)).join(","));
+  };
+
+  /** 多边形筛选时计算外包围盒，供密度点聚合做粗筛。 */
+  const polyBBox = () => {
+    if (!fencePoly) return null;
+    const lons = fencePoly.map(p => p[0]), lats = fencePoly.map(p => p[1]);
+    return [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+  };
+
+  const circleBBox = () => {
+    if (!fenceCircle) return null;
+    const [lon, lat, r] = fenceCircle;
+    const dlat = r / 110.57;
+    const dlon = r / (111.32 * Math.max(Math.cos(lat * Math.PI / 180), 1e-6));
+    return [lon - dlon, lat - dlat, lon + dlon, lat + dlat];
+  };
+
+  /** 当前视野 bbox：优先空间筛选范围（保证聚合格落在筛区内）。 */
+  const viewBBox = () => fenceBBox || polyBBox() || circleBBox() || bbox;
+
+  const updateFenceUI = () => {
+    const show = hasFence();
+    fenceInfo.style.display = show ? "" : "none";
+    resetFenceBtn.style.display = show ? "" : "none";
+    if (!show) return;
+    if (fenceBBox) {
+      fenceInfo.textContent =
+        `已框选 ${(fenceBBox[2] - fenceBBox[0]).toFixed(2)}° × ${(fenceBBox[3] - fenceBBox[1]).toFixed(2)}°`;
+    } else if (fencePoly) {
+      fenceInfo.textContent = `多边形 ${fencePoly.length} 个顶点`;
+    } else if (fenceCircle) {
+      fenceInfo.textContent = `圆形 半径 ${Number(fenceCircle[2]).toFixed(1)} km`;
+    }
+  };
+
+  /** 清空所有空间筛选（切换模式或手动清除时调用）。 */
+  const clearFence = () => {
+    fenceBBox = null; fencePoly = null; fenceCircle = null;
+    polyPts = []; polyHover = null; lastPtScreen = null;
+    selDiv.style.display = "none";
+    updateFenceUI();
+    repaint();
+  };
+
+  /* 捕获阶段在容器上拦截：筛选模式下禁止地图平移。
      注意不能把监听器绑到 canvas 本身——同一元素上的多个监听器
      按注册顺序执行，stopPropagation 拦不住 TileMap 自己的监听。 */
   const canvas = map.canvas;
+
+  /* 多边形预览图层：顶点之间的连线 + 鼠标位置的橡皮筋 */
+  const polyLayer = {
+    paint(m, ctx) {
+      if (!polyPts.length) return;
+      const scr = polyPts.map(p => m.toScreen(p[0], p[1]));
+      if (polyHover) scr.push(m.toScreen(polyHover[0], polyHover[1]));
+      ctx.strokeStyle = "rgba(34,211,238,.95)";
+      ctx.lineWidth = 1.8; ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      scr.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      /* 顶点圆点（首个顶点标红，便于看出闭合方向） */
+      scr.slice(0, polyPts.length).forEach(([x, y], i) => {
+        ctx.beginPath(); ctx.arc(x, y, i === 0 ? 4.5 : 3, 0, 7);
+        ctx.fillStyle = i === 0 ? "#f472b6" : "#22d3ee";
+        ctx.fill();
+      });
+    },
+  };
+
+  /* 已确认的多边形/圆形边界也要一直画出来 */
+  const fenceLayer = {
+    paint(m, ctx) {
+      if (fencePoly) {
+        const scr = fencePoly.map(p => m.toScreen(p[0], p[1]));
+        ctx.beginPath();
+        scr.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = "rgba(34,211,238,.08)"; ctx.fill();
+        ctx.strokeStyle = "rgba(34,211,238,.85)";
+        ctx.lineWidth = 1.8; ctx.stroke();
+      }
+      if (fenceCircle) {
+        const [lon, lat, r] = fenceCircle;
+        const [cx, cy] = m.toScreen(lon, lat);
+        const [ex] = m.toScreen(lon + r / (111.32 * Math.max(Math.cos(lat * Math.PI / 180), 1e-6)), lat);
+        const rpx = Math.abs(ex - cx);
+        ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, rpx), 0, 7);
+        ctx.fillStyle = "rgba(34,211,238,.08)"; ctx.fill();
+        ctx.strokeStyle = "rgba(34,211,238,.85)";
+        ctx.lineWidth = 1.8; ctx.stroke();
+      }
+    },
+  };
+
+  /* 把两个叠加图层注册到 repaint 的图层栈（多边形预览 + 已确认筛区） */
+  overlayLayers.push(polyLayer, fenceLayer);
+
   mapBox.addEventListener("mousedown", e => {
-    if (!chkFence.checked || e.button !== 0 || e.target !== canvas) return;
+    if (pickMode() === "none" || e.button !== 0 || e.target !== canvas) return;
     e.stopPropagation();
     e.preventDefault();
+    if (pickMode() === "poly") {
+      /* 多边形：单击添加顶点；双击闭合由 dblclick 处理。
+         双击会先触发两次 mousedown，这里按屏幕距离去重，
+         否则最终多边形会多出两个重合顶点。 */
+      const sx = e.offsetX, sy = e.offsetY;
+      if (lastPtScreen && Math.hypot(sx - lastPtScreen[0], sy - lastPtScreen[1]) < 6) return;
+      lastPtScreen = [sx, sy];
+      const ll = map.unproject(sx, sy);
+      polyPts.push([ll[0], ll[1]]);
+      polyHover = null;
+      map.draw();
+      return;
+    }
     dragging = true;
     dragStart = [e.offsetX, e.offsetY];
     selDiv.style.display = "";
@@ -347,21 +486,65 @@ export async function render(view) {
     selDiv.style.top = `${e.offsetY}px`;
     selDiv.style.width = "0px";
     selDiv.style.height = "0px";
+    if (pickMode() === "circle") {
+      selDiv.style.borderRadius = "50%";
+      selDiv.style.borderStyle = "dashed";
+    } else {
+      selDiv.style.borderRadius = "0";
+      selDiv.style.borderStyle = "solid";
+    }
   }, true);
+
   mapBox.addEventListener("mousemove", e => {
-    if (!dragging || e.target !== canvas) return;
+    if (e.target !== canvas) return;
+    if (pickMode() === "poly" && polyPts.length) {
+      /* 悬停时实时预览「下一条边」 */
+      polyHover = map.unproject(e.offsetX, e.offsetY);
+      map.draw();
+      return;
+    }
+    if (!dragging) return;
     e.stopPropagation();
     const x = e.offsetX, y = e.offsetY;
-    selDiv.style.left = `${Math.min(x, dragStart[0])}px`;
-    selDiv.style.top = `${Math.min(y, dragStart[1])}px`;
-    selDiv.style.width = `${Math.abs(x - dragStart[0])}px`;
-    selDiv.style.height = `${Math.abs(y - dragStart[1])}px`;
+    if (pickMode() === "circle") {
+      const rp = Math.hypot(x - dragStart[0], y - dragStart[1]);
+      selDiv.style.left = `${dragStart[0] - rp}px`;
+      selDiv.style.top = `${dragStart[1] - rp}px`;
+      selDiv.style.width = `${rp * 2}px`;
+      selDiv.style.height = `${rp * 2}px`;
+    } else {
+      selDiv.style.left = `${Math.min(x, dragStart[0])}px`;
+      selDiv.style.top = `${Math.min(y, dragStart[1])}px`;
+      selDiv.style.width = `${Math.abs(x - dragStart[0])}px`;
+      selDiv.style.height = `${Math.abs(y - dragStart[1])}px`;
+    }
   }, true);
+
   mapBox.addEventListener("mouseup", (e) => {
     if (!dragging || e.target !== canvas) return;
     e.stopPropagation();
     dragging = false;
     const x = e.offsetX, y = e.offsetY;
+    const mode = pickMode();
+
+    if (mode === "circle") {
+      selDiv.style.display = "none";
+      const a = map.unproject(dragStart[0], dragStart[1]);
+      /* Web 遗卡托是等角投影：同一屏幕上横向与纵向的比例尺一致，
+         因此「像素半径 × 每像素纬度度数 × 110.57 km」就是真实半径。 */
+      const degPerPx = Math.abs(map.unproject(0, 0)[1] - map.unproject(0, 1)[1]);
+      const rpx = Math.hypot(x - dragStart[0], y - dragStart[1]);
+      const rKm = rpx * degPerPx * 110.57;
+      if (rKm < 1) return;                    // 误触，忽略
+      fenceBBox = null; fencePoly = null;
+      fenceCircle = [a[0], a[1], +rKm.toFixed(2)];
+      updateFenceUI();
+      repaint();
+      loadAll();
+      return;
+    }
+
+    /* 矩形 */
     const a = map.unproject(dragStart[0], dragStart[1]);
     const b = map.unproject(x, y);
     if (Math.abs(x - dragStart[0]) < 8 || Math.abs(y - dragStart[1]) < 8) {
@@ -370,22 +553,62 @@ export async function render(view) {
     }
     fenceBBox = [Math.min(a[0], b[0]), Math.min(a[1], b[1]),
                  Math.max(a[0], b[0]), Math.max(a[1], b[1])];
-    fenceInfo.style.display = "";
-    fenceInfo.textContent =
-      `已框选 ${(fenceBBox[2] - fenceBBox[0]).toFixed(2)}° × ${(fenceBBox[3] - fenceBBox[1]).toFixed(2)}°`;
+    fencePoly = null; fenceCircle = null;
+    updateFenceUI();
+    repaint();
     loadAll();
   }, true);
 
-  chkFence.addEventListener("change", () => {
-    canvas.style.cursor = chkFence.checked ? "crosshair" : "grab";
-    if (!chkFence.checked) {
-      selDiv.style.display = "none";
-      fenceInfo.style.display = "none";
-      fenceBBox = null;
-      loadAll();
-    } else {
-      toast("在地图上按住拖拽，框选分析范围");
+  /* 双击闭合多边形（顶点数 ≥ 3 时生效） */
+  canvas.addEventListener("dblclick", e => {
+    if (pickMode() !== "poly") return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (polyPts.length < 3) { toast("多边形至少需要 3 个顶点", true); return; }
+    fenceBBox = null; fenceCircle = null;
+    fencePoly = polyPts.map(p => [p[0], p[1]]);
+    polyPts = [];
+    polyHover = null;
+    lastPtScreen = null;
+    updateFenceUI();
+    repaint();
+    loadAll();
+  }, true);
+
+  /* Esc 取消正在绘制中的多边形 */
+  const onKeyEsc = (e) => {
+    if (e.key === "Escape" && polyPts.length) {
+      polyPts = [];
+      polyHover = null;
+      lastPtScreen = null;
+      repaint();
+      toast("已取消多边形绘制");
     }
+  };
+  window.addEventListener("keydown", onKeyEsc);
+  /* 路由切走时移除全局监听，避免在其它页面误响应 */
+  map.__cleanup = () => window.removeEventListener("keydown", onKeyEsc);
+
+  pickModeSel.addEventListener("change", () => {
+    const mode = pickMode();
+    canvas.style.cursor = mode === "none" ? "grab" : "crosshair";
+    clearFence();
+    if (mode === "none") {
+      loadAll();
+    } else if (mode === "rect") {
+      toast("在地图上按住拖拽，框选矩形范围");
+    } else if (mode === "circle") {
+      toast("在地图上从圆心按住拖拽，松手确定半径");
+    } else {
+      toast("逐点单击绘制多边形，双击闭合（Esc 取消）");
+    }
+  });
+
+  resetFenceBtn.addEventListener("click", () => {
+    pickModeSel.value = "none";
+    canvas.style.cursor = "grab";
+    clearFence();
+    loadAll();
   });
 
   /* ---------- 数据加载 ---------- */
@@ -398,11 +621,20 @@ export async function render(view) {
     if (f.ship_types) qs.set("ship_types", f.ship_types.join(","));
     if (f.t0) qs.set("t0", f.t0);
     if (f.t1) qs.set("t1", f.t1);
-    if (fenceBBox) qs.set("bbox", fenceBBox.map(v => v.toFixed(5)).join(","));
+    appendFence(qs);
+    /* 密度点聚合：视口 bbox 作为粗筛，筛区（多边形/圆形）再下推精确判定 */
+    const pq = new URLSearchParams({
+      dataset_version: state.dataset, bbox: viewBBox().join(","), zoom: String(Math.round(map.zoom)),
+    });
+    if (f.ship_types) pq.set("ship_types", f.ship_types.join(","));
+    if (f.t0) pq.set("t0", f.t0);
+    if (f.t1) pq.set("t1", f.t1);
+    if (fencePoly) pq.set("polygon", JSON.stringify(fencePoly));
+    if (fenceCircle) pq.set("circle", fenceCircle.map(v => +Number(v).toFixed(5)).join(","));
     try {
       const [traj, pts, ves] = await Promise.all([
         api(`/map/trajectories?${qs.toString()}`),
-        api(`/map/points?dataset_version=${encodeURIComponent(state.dataset)}&bbox=${(fenceBBox || bbox).join(",")}&zoom=${Math.round(map.zoom)}${f.ship_types ? "&ship_types=" + encodeURIComponent(f.ship_types.join(",")) : ""}${f.t0 ? "&t0=" + encodeURIComponent(f.t0) : ""}${f.t1 ? "&t1=" + encodeURIComponent(f.t1) : ""}`),
+        api(`/map/points?${pq.toString()}`),
         api(`/vessels?${qs.toString()}`),
       ]);
       lastTraj = traj;
@@ -494,7 +726,8 @@ export async function render(view) {
   }
 
   map.onClick = (lonlat) => {
-    if (chkFence.checked) return;          // 框选模式下不触发选中
+    /* 空间筛选模式下不触发单船高亮，避免拖拽/点击被误认为选船 */
+    if (pickMode() !== "none") return;
     // 点击靠近某条轨迹起点时高亮（简单最近点匹配）
     if (!lastTraj || !lastTraj.features) return;
     let best = null, bd = 0.02;
