@@ -34,14 +34,22 @@ def wrap_deg(delta: float) -> float:
 
 
 def circular_mean_deg(angles: Sequence[float]) -> float:
-    """角度圆均值，正确跨 359°/1°。"""
+    """角度圆均值，正确跨 359°/1°。
+
+    返回值域严格限定在 [0, 360)，不会出现 360.0：
+    atan2 在正北方向会给出极小负角，直接 `% 360` 会得到 360.0，
+    与 0° 等价却无法直接比较，因此对接近 360 的结果显式归零。
+    """
     if not angles:
         return float("nan")
     s = sum(math.sin(math.radians(a)) for a in angles)
     c = sum(math.cos(math.radians(a)) for a in angles)
     if abs(s) < 1e-12 and abs(c) < 1e-12:
         return float("nan")
-    return math.degrees(math.atan2(s, c)) % 360.0
+    deg = math.degrees(math.atan2(s, c)) % 360.0
+    if deg >= 360.0 - 1e-9 or deg < 0.0:
+        deg = 0.0
+    return deg
 
 
 @dataclass(frozen=True)

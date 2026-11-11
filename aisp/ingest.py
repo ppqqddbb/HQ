@@ -61,25 +61,54 @@ def duckdb_encoding(enc: str) -> str:
     return _DUCKDB_ENCODING.get(enc, "utf-8")
 
 
-def _read_head(path: Path, encoding: str, n: int = 5) -> List[List[str]]:
+def _read_head(path: Path, encoding: str, n: int = 5) -> List[str]:
+    """读取前 n 行“原始文本”。
+
+    注意：不能用 csv.reader，因为它会按逗号预切分，
+    使后续分隔符探测（分号/制表符/竖线）完全失效。
+    """
+    lines: List[str] = []
     with path.open("r", encoding=encoding, errors="replace", newline="") as fh:
-        reader = csv.reader(fh)
-        rows = []
-        for i, row in enumerate(reader):
-            rows.append(row)
-            if i + 1 >= n:
+        for line in fh:
+            lines.append(line.rstrip("\r\n"))
+            if len(lines) >= n:
                 break
-        return rows
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines
 
 
-def detect_delimiter(head: List[List[str]]) -> str:
-    if not head or not head[0]:
+def detect_delimiter(head: List[str] | List[List[str]]) -> str:
+    """根据前几行样本推断分隔符。
+
+    兼容两种输入：原始文本行（str）或已切分的行（list）。
+    判定规则：对每个候选分隔符，统计各行出现次数；
+    只有“所有行出现次数相同且都 >= 1”的候选才算合法，
+    再取“字段数最多”的那个。若都不合法则回退逗号。
+    """
+    if not head:
         return ","
-    best, best_score = ",", -1
-    for cand in (",", ";", "\t", "|"):
-        counts = {r.count(cand) for r in head if r}
-        if len(counts) == 1 and head[0].count(cand) >= 1 and len(head[0]) > best_score:
-            best, best_score = cand, len(head[0])
+    # 统一成“每行的字符串列表”，逐行计数
+    rows: List[List[int]] = []
+    for r in head:
+        if not r:
+            continue
+        if isinstance(r, str):
+            counts = [r.count(c) for c in (",", ";", "\t", "|")]
+        else:
+            text = "".join(str(x) for x in r)
+            counts = [text.count(c) for c in (",", ";", "\t", "|")]
+        rows.append(counts)
+    if not rows:
+        return ","
+    best, best_fields = ",", 1
+    for idx, cand in enumerate((",", ";", "\t", "|")):
+        vals = [c[idx] for c in rows]
+        if vals[0] < 1 or len(set(vals)) != 1:
+            continue
+        fields = vals[0] + 1
+        if fields > best_fields:
+            best, best_fields = cand, fields
     return best
 
 
@@ -100,7 +129,8 @@ def preflight(path: Path | str) -> Dict[str, Any]:
     encoding = detect_encoding(p)
     head = _read_head(p, encoding, 5)
     delimiter = detect_delimiter(head)
-    columns = [c.strip() for c in head[0]] if head else []
+    # head 是原始文本行，列名需要先按探测到的分隔符切分
+    columns = [c.strip().strip('"') for c in (head[0].split(delimiter) if head else [])]
     sample = pd.read_csv(p, encoding=encoding, sep=delimiter, nrows=2000, dtype=str, low_memory=False)
     sample.columns = [c.strip() for c in sample.columns]
     mapping = {c: FIELD_MAPPING.get(c, f"extra_{i}") for i, c in enumerate(sample.columns)}

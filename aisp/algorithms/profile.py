@@ -345,6 +345,8 @@ def correlate(
 
 
 def _strength(v: float) -> str:
+    """把相关系数强度分档（只看绝对值，正负相关同样适用）。"""
+    v = abs(float(v))
     if v >= 0.7:
         return "强"
     if v >= 0.4:

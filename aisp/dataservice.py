@@ -16,12 +16,28 @@ from .algorithms.common import Filter, open_dataset
 from .config import settings
 
 
+def dataset_exists(dataset_version: str) -> bool:
+    """判断某个数据集版本是否真的存在于磁盘上（有已治理的点表 parquet）。"""
+    if not dataset_version:
+        return False
+    d = settings.clean_root / dataset_version
+    if not d.is_dir():
+        return False
+    return any(d.glob("event_date=*/*.parquet")) or any(d.glob("*.parquet"))
+
+
 def overview(dataset_version: Optional[str] = None) -> Dict[str, Any]:
     """总览工作台：数据规模、时间范围、覆盖区域、质量与任务状态。"""
     dv = dataset_version or _latest_dataset()
     out: Dict[str, Any] = {"dataset_version": dv}
     if not dv:
         out["empty"] = True
+        return out
+    # 显式指定了不存在的数据集版本时，直接返回空结果，
+    # 不要让它走到 open_dataset() 抛 DuckDB 的 IO 异常（那是 500，不是 404）。
+    if dataset_version and not dataset_exists(dataset_version):
+        out["empty"] = True
+        out["reason"] = f"数据集 {dataset_version} 不存在或尚未完成治理"
         return out
 
     con = open_dataset(dv)

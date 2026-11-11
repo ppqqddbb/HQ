@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -24,7 +25,22 @@ from .config import settings, default_params, DEFAULT_PARAMS
 from . import ingest as ingest_mod
 
 log = logging.getLogger(__name__)
-app = FastAPI(title="AIS 船舶航迹数据分析与可视化系统", version="1.0.0")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """应用启动 / 关闭钩子（取代已弃用的 on_event）。"""
+    store.init_meta()
+    settings.ensure_dirs()
+    _seed_demo_if_needed()
+    yield
+
+
+app = FastAPI(
+    title="AIS 船舶航迹数据分析与可视化系统",
+    version="1.0.0",
+    lifespan=_lifespan,
+)
 
 STATUS_CN = {
     "queued": "排队中", "running": "运行中", "succeeded": "已完成",
@@ -51,11 +67,6 @@ async def http_error_handler(request: Request, exc: HTTPException):
     )
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    store.init_meta()
-    settings.ensure_dirs()
-    _seed_demo_if_needed()
 
 
 # --------------------------------------------------------------------------- 数据集
@@ -123,6 +134,9 @@ def api_datasets() -> Dict[str, Any]:
 
 @app.get("/api/v1/datasets/{dataset_version}/profile")
 def api_profile(dataset_version: str) -> Dict[str, Any]:
+    # 未治理完成的数据集直接返回 404，避免向上抛 DuckDB 的 IO 异常（变成 500）
+    if not dataservice.dataset_exists(dataset_version):
+        raise HTTPException(404, f"数据集 {dataset_version} 不存在或尚未完成治理")
     return pack(dataservice.overview(dataset_version))
 
 

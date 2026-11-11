@@ -287,7 +287,7 @@ def run(
         for r in routes:
             redundant = False
             for pat2, units2 in kept_sets:
-                if r["support"] <= len(units2) and _is_subseq(r["seq"], pat2):
+                if r["support"] <= len(units2) and _is_contiguous_subseq(r["seq"], pat2):
                     redundant = True
                     break
             if redundant:
@@ -387,8 +387,12 @@ def _hav(lon1, lat1, lon2, lat2) -> float:
     return 2 * 6371008.8 * math.asin(min(1.0, math.sqrt(a)))
 
 
-def _is_subseq(short: Sequence[int], long: Sequence[int]) -> bool:
-    """short 是否是 long 的连续子串。"""
+def _is_contiguous_subseq(short: Sequence[int], long: Sequence[int]) -> bool:
+    """short 是否为 long 的“连续”子序列（逐元素相等、不跨缺口）。
+
+    注意：与数学意义上的 subsequence（允许挖空）不同，这里要求连续，
+    因为航线模式判定中“隔了几个网格再出现”不算同一条航线。
+    """
     n, m = len(short), len(long)
     if n > m:
         return False
@@ -398,8 +402,14 @@ def _is_subseq(short: Sequence[int], long: Sequence[int]) -> bool:
     return False
 
 
+# 向后兼容的别名：保留旧名，避免外部脚本引用失效
+def _is_subseq(short: Sequence[int], long: Sequence[int]) -> bool:
+    return _is_contiguous_subseq(short, long)
+
+
 def _contains_run(seq: Sequence[int], pat: List[int]) -> bool:
-    return _is_subseq(pat, seq)
+    """seq 中是否包含 pat 这一“连续”片段。"""
+    return _is_contiguous_subseq(pat, seq)
 
 
 def _route_mmsi(units: set, df: pd.DataFrame) -> int:
