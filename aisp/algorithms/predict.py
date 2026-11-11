@@ -272,6 +272,7 @@ def run(
             WHERE {where} AND coalesce(short_segment, FALSE) = FALSE
               AND coalesce(quality_score, 0) >= {min_q}
               AND coalesce(quality_flags, '') NOT LIKE '%JUMP%'
+              AND coalesce(quality_flags, '') NOT LIKE '%FROZEN_GPS%'
             GROUP BY 1 HAVING count(*) >= {input_steps + horizon_steps + 2}
             ORDER BY n DESC LIMIT {max_traj}
             """
@@ -283,15 +284,28 @@ def run(
         df = con.execute(
             f"""SELECT traj_id, event_time, lon, lat, sog, cog FROM clean_points
                 WHERE traj_id IN ({lst}) AND coalesce(quality_flags,'') NOT LIKE '%JUMP%'
+                  AND coalesce(quality_flags,'') NOT LIKE '%FROZEN_GPS%'
                 ORDER BY traj_id, event_time"""
         ).fetchdf()
 
-        # 模型卡需要「训练数据实际覆盖的时间 / 区域」，因此记录抽样后的真实范围；
-        # 注意不要直接用 dataset_version 的全量范围——预测只用了前 max_traj 条轨迹。
+        # 模型卡需要「训练数据实际覆盖的时间 / 区域」，因此记录抽样后的真实范围。
+        # 注意：bbox 用 0.1%/99.9% 分位数而非 min/max——个别卡死设备的错误坐标
+        # （如单船连续上报同一个大西洋坐标）会把包络拉到全球尺度，使模型卡里的
+        # 训练区域失真。这与 dataservice 数据集画像的口径保持一致。
+        lon_v = pd.to_numeric(df["lon"], errors="coerce").dropna()
+        lat_v = pd.to_numeric(df["lat"], errors="coerce").dropna()
+        if len(lon_v) and len(lat_v):
+            l0, l1 = (float(v) for v in np.quantile(lon_v, [0.001, 0.999]))
+            a0, a1 = (float(v) for v in np.quantile(lat_v, [0.001, 0.999]))
+            bbox = [round(l0, 4), round(a0, 4), round(l1, 4), round(a1, 4)]
+        else:
+            bbox = [None, None, None, None]
         data_range = {
             "time_range": [str(df["event_time"].min()), str(df["event_time"].max())],
-            "bbox": [float(df["lon"].min()), float(df["lat"].min()),
-                     float(df["lon"].max()), float(df["lat"].max())],
+            "bbox": bbox,
+            "bbox_raw": [float(df["lon"].min()), float(df["lat"].min()),
+                         float(df["lon"].max()), float(df["lat"].max())],
+            "bbox_mode": "quantile_0.1_99.9",
             "n_trajectories_used": int(df["traj_id"].nunique()),
             "n_points_used": int(len(df)),
         }

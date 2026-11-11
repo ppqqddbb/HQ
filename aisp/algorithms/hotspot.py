@@ -110,6 +110,7 @@ def run(
             FROM clean_points
             WHERE {where} AND coalesce(quality_flags,'') NOT LIKE '%JUMP%'
               AND coalesce(quality_flags,'') NOT LIKE '%GPS_DRIFT%'
+              AND coalesce(quality_flags,'') NOT LIKE '%FROZEN_GPS%'
             QUALIFY row_number() OVER (
                 PARTITION BY mmsi, slot ORDER BY event_time
             ) = 1

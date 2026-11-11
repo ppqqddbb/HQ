@@ -156,6 +156,9 @@ DEFAULT_PARAMS: Dict[str, Dict[str, Any]] = {
         "stay_radius_m": 200.0,          # 驻留点半径 R
         "stay_minutes": 20.0,            # 驻留点最短持续 T
         "stay_max_sog_kn": 1.5,          # 驻留候选点的航速上限
+        "frozen_gps_sog_kn": 2.0,       # 位移为 0 但 SOG 高于该值 → 判定为冻结/卡死 GPS
+        "frozen_gps_min_points": 20,     # 冻结段最少连续点数
+        "frozen_gps_min_minutes": 15.0,   # 冻结段最少持续时长（分钟）
         "dedup_keys": ["mmsi", "event_time"],
         # 基站/航标/SAR 飞机不是船舶目标，默认不进入船舶轨迹分析
         "exclude_mobile_types": [

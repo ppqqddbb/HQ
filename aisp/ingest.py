@@ -415,8 +415,12 @@ def staging_profile(batch_id: str) -> Dict[str, Any]:
             f"""SELECT COUNT(*) n, COUNT(DISTINCT mmsi) m,
                        min(event_time) t0, max(event_time) t1,
                        min(lat) minlat, max(lat) maxlat, min(lon) minlon, max(lon) maxlon,
+                       quantile_cont(lon, 0.001) p001lon, quantile_cont(lat, 0.001) p001lat,
+                       quantile_cont(lon, 0.999) p999lon, quantile_cont(lat, 0.999) p999lat,
                        avg(CASE WHEN event_time IS NULL THEN 1 ELSE 0 END) bad_time,
                        avg(CASE WHEN lon IS NULL OR lat IS NULL THEN 1 ELSE 0 END) bad_pos,
+                       avg(CASE WHEN lon < -180 OR lon > 180 OR lat < -90 OR lat > 90
+                                THEN 1 ELSE 0 END) bad_coord,
                        median(sog) med_sog, quantile_cont(sog, 0.99) p99_sog,
                        count(DISTINCT ship_type) n_ship_type
                 FROM read_parquet('{glob}')"""
@@ -432,6 +436,10 @@ def staging_profile(batch_id: str) -> Dict[str, Any]:
             out[k] = round(v, 4)
         else:
             out[k] = v
+    # 稳健包络：min/max 会被个别卡死设备的错误坐标拉到全球尺度，
+    # 同时给出 0.1%/99.9% 分位数，便于人工判断真实作业海域。
+    if all(out.get(k) is not None for k in ("p001lon", "p001lat", "p999lon", "p999lat")):
+        out["bbox_robust"] = [out["p001lon"], out["p001lat"], out["p999lon"], out["p999lat"]]
     return out
 
 

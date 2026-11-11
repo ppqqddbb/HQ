@@ -32,7 +32,7 @@ ProgressCb = Optional[Callable[[float, str], None]]
 EARTH_R = 6371008.8
 
 # 计入质量分的异常标记（提示类不计分）
-ERROR_FLAGS = ("INVALID_TIME", "TIME_CONFLICT", "SPEED_SPIKE", "JUMP", "GPS_DRIFT", "INVALID_COG")
+ERROR_FLAGS = ("INVALID_TIME", "TIME_CONFLICT", "SPEED_SPIKE", "JUMP", "GPS_DRIFT", "INVALID_COG", "FROZEN_GPS")
 INFO_FLAGS = ("STATIONARY_NOISE", "LOW_SPEED_COG_UNRELIABLE")
 
 QUALITY_WEIGHTS = {"完整性": 0.20, "有效性": 0.25, "时序连续性": 0.20, "空间合理性": 0.20, "字段一致性": 0.15}
@@ -77,6 +77,10 @@ def build_clean(
     stay_r = float(params.get("stay_radius_m", 200.0))
     stay_t = float(params.get("stay_minutes", 20.0)) * 60.0
     stay_max_sog = float(params.get("stay_max_sog_kn", 1.5))
+    # 冻结 GPS：位置逐位不变却又报告“在航行”，是设备卡死而非真实锚泊
+    frozen_sog = float(params.get("frozen_gps_sog_kn", 2.0))
+    frozen_min_pts = max(3, int(params.get("frozen_gps_min_points", 20)))
+    frozen_min_s = float(params.get("frozen_gps_min_minutes", 15.0)) * 60.0
     dedup_keys = [k for k in (params.get("dedup_keys") or ["mmsi", "event_time"])
                   if k in ("mmsi", "event_time", "lon", "lat")]
     if not dedup_keys:
@@ -196,8 +200,31 @@ def build_clean(
                          ELSE dist_m / dt_s * 1.943844 END AS implied_speed_kn
                 FROM d
             ),
+            -- 「同一位置连续段」：把位置逐位未变的相邻点归入同一段。
+            -- 段的起点是「该位置第一次出现的那一行」，这样段内的 SOG 也能被统计到——
+            -- AIS 导出常只在段首带 SOG，若把首行排除在外就永远看不到「报告在航行」。
+            -- 同时要求时间间隔正常：长缺口两端恰好停在同一位置不算一段。
+            cand AS (
+                SELECT *, (CASE WHEN lat IS NOT DISTINCT FROM lag(lat) OVER w
+                                      AND lon IS NOT DISTINCT FROM lag(lon) OVER w
+                                      AND dt_s IS NOT NULL AND dt_s > 0 AND dt_s <= {max_gap_s}
+                                THEN 0 ELSE 1 END) AS new_pos
+                FROM e WINDOW w AS (PARTITION BY mmsi ORDER BY event_time, row_no)
+            ),
+            isl AS (
+                SELECT *, sum(new_pos) OVER (
+                    PARTITION BY mmsi ORDER BY event_time, row_no
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS isl_id
+                FROM cand
+            ),
+            -- 段级特征：段内最大 SOG 才是“到底报没报在航行”的证据。
+            frz_run AS (
+                SELECT mmsi, isl_id, count(*) AS frz_n, max(sog) AS frz_max_sog,
+                       date_diff('second', min(event_time), max(event_time)) AS frz_dur_s
+                FROM isl GROUP BY 1, 2 HAVING count(*) >= {frozen_min_pts}
+            ),
             f AS (
-                SELECT *,
+                SELECT isl.*, r.frz_n, r.frz_max_sog, r.frz_dur_s,
                     -- 提示类：静止抖动 / 低速航向不可靠（不计入质量分）
                     (CASE WHEN sog IS NOT NULL AND sog < 0.5 AND dt_s IS NOT NULL
                                AND dist_m IS NOT NULL AND dist_m < 15 THEN 1 ELSE 0 END) AS info_stationary,
@@ -211,14 +238,20 @@ def build_clean(
                             OR (dist_m IS NOT NULL AND dist_m > {max_jump_m}) THEN 1 ELSE 0 END) AS err_jump,
                     (CASE WHEN implied_speed_kn IS NOT NULL AND implied_speed_kn > 3.0
                                AND sog IS NOT NULL AND sog < 0.5 THEN 1 ELSE 0 END) AS err_drift,
+                    -- 冻结 GPS：整段位置为同一点，但段内报告过航行速度，且持续足够久。
+                    -- 真实锚泊/靠泊的 SOG ≈ 0，不会误伤；设备卡死则位置不变却报在跑。
+                    (CASE WHEN r.frz_n IS NOT NULL AND r.frz_n >= {frozen_min_pts}
+                               AND r.frz_dur_s >= {frozen_min_s}
+                               AND r.frz_max_sog >= {frozen_sog} THEN 1 ELSE 0 END) AS err_frozen,
                     (CASE WHEN prev_time IS NULL OR dt_s IS NULL OR dt_s > {max_gap_s}
                             OR (implied_speed_kn IS NOT NULL AND implied_speed_kn > {jump_speed})
                             OR (dist_m IS NOT NULL AND dist_m > {max_jump_m})
                             OR dt_s <= 0 THEN 1 ELSE 0 END) AS seg_break
-                FROM e
+                FROM isl LEFT JOIN frz_run r USING (mmsi, isl_id)
             )
-            SELECT * EXCLUDE (info_stationary, info_lowsog, err_time, err_conflict, err_cog,
-                              err_spike, err_jump, err_drift, seg_break),
+            SELECT * EXCLUDE (new_pos, isl_id, frz_n, frz_max_sog, frz_dur_s, info_stationary, info_lowsog,
+                              err_time, err_conflict, err_cog, err_spike, err_jump, err_drift,
+                              err_frozen, seg_break),
                    trim(both ',' from concat_ws(',',
                        CASE WHEN err_time = 1 THEN 'INVALID_TIME' END,
                        CASE WHEN err_conflict = 1 THEN 'TIME_CONFLICT' END,
@@ -226,12 +259,14 @@ def build_clean(
                        CASE WHEN err_spike = 1 THEN 'SPEED_SPIKE' END,
                        CASE WHEN err_jump = 1 THEN 'JUMP' END,
                        CASE WHEN err_drift = 1 THEN 'GPS_DRIFT' END,
+                       CASE WHEN err_frozen = 1 THEN 'FROZEN_GPS' END,
                        CASE WHEN info_stationary = 1 THEN 'STATIONARY_NOISE' END,
                        CASE WHEN info_lowsog = 1 THEN 'LOW_SPEED_COG_UNRELIABLE' END
                    )) AS quality_flags,
-                   (err_time + err_conflict + err_cog + err_spike + err_jump + err_drift
+                   (err_time + err_conflict + err_cog + err_spike + err_jump + err_drift + err_frozen
                     + info_stationary + info_lowsog) AS n_flags,
-                   (err_time + err_conflict + err_cog + err_spike + err_jump + err_drift) AS n_errors,
+                   (err_time + err_conflict + err_cog + err_spike + err_jump + err_drift
+                    + err_frozen) AS n_errors,
                    (CASE WHEN prev_time IS NULL THEN 'START'
                          WHEN dt_s IS NULL OR dt_s <= 0 THEN 'TIME_CONFLICT'
                          WHEN dt_s > {max_gap_s} THEN 'GAP'

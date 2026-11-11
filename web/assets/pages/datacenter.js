@@ -297,6 +297,7 @@ function renderQuality(box, q, dv) {
   const flagCN = {
     INVALID_TIME: "时间无效", TIME_CONFLICT: "时间冲突", SPEED_SPIKE: "航速突变",
     JUMP: "位置跳变", GPS_DRIFT: "GPS 漂移", INVALID_COG: "航向无效",
+    FROZEN_GPS: "GPS 冻结",
     STATIONARY_NOISE: "静止噪声", LOW_SPEED_COG_UNRELIABLE: "低速航向不可靠",
   };
   const items = Object.entries(fc).map(([k, v]) => ({
@@ -309,7 +310,7 @@ function renderQuality(box, q, dv) {
   if (items.length) {
     flagBox.appendChild(bars(items.sort((a, b) => b.value - a.value), { fmt: v => FMT.big(v) }));
     flagBox.appendChild(el("div", { class: "note", style: { marginTop: "10px" } },
-      "错误类标记（INVALID_TIME / TIME_CONFLICT / SPEED_SPIKE / JUMP / GPS_DRIFT / INVALID_COG）计入质量扣分；" +
+      "错误类标记（INVALID_TIME / TIME_CONFLICT / SPEED_SPIKE / JUMP / GPS_DRIFT / INVALID_COG / FROZEN_GPS）计入质量扣分；" +
       "静止噪声与低速航向不可靠仅作提示，不扣分。"));
   } else flagBox.appendChild(empty("无异常标记"));
 
