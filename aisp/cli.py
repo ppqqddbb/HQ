@@ -174,6 +174,58 @@ def cmd_restore(args: argparse.Namespace) -> None:
                      ensure_ascii=False, indent=2, default=str))
 
 
+def cmd_backfill_profile(args: argparse.Namespace) -> None:
+    """回填历史批次的 profile_json（补 MMSI 数、编码、分隔符）。
+
+    早期版本只把 staging 统计写进 profile_json，没有 encoding / delimiter，
+    导致「文件与批次」的「编码」列永远显示「—」。这个命令可以反复执行，
+    不会改动批次表的其它列。执行前必须停掉 Web 服务（DuckDB 单实例锁）。
+    """
+    from .config import settings as cfg
+    from .ingest import detect_delimiter, detect_encoding, staging_profile
+
+    store.init_meta()
+    df = store.batch_list()
+    if df.empty:
+        print("没有批次，无需回填")
+        return
+    for r in df.to_dict(orient="records"):
+        bid = r["batch_id"]
+        raw = r.get("profile_json")
+        prof: Dict[str, Any] = {}
+        if raw:
+            try:
+                prof = json.loads(raw)
+            except ValueError:
+                prof = {}
+        try:
+            prof.update(staging_profile(bid))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[{bid}] staging 统计失败：{exc}")
+
+        src_dir = cfg.root / (r.get("source_path") or "")
+        csvs = sorted(p for p in src_dir.glob("*.csv")) if src_dir.is_dir() else []
+        if csvs:
+            try:
+                enc = detect_encoding(csvs[0])
+                prof["encoding"] = enc
+                with csvs[0].open("r", encoding=enc, errors="replace", newline="") as fh:
+                    head_lines = [fh.readline() for _ in range(5)]
+                prof["delimiter"] = detect_delimiter(head_lines)
+                print(f"[{bid}] 编码 {enc} / 分隔符 {prof['delimiter']!r} / "
+                      f"MMSI {prof.get('m')}")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[{bid}] 编码探测失败：{exc}")
+        else:
+            print(f"[{bid}] 未找到源 CSV，仅回填统计量")
+
+        store.exec_sql(
+            "UPDATE data_batch SET profile_json = ? WHERE batch_id = ?",
+            [json.dumps(prof, ensure_ascii=False, default=str), bid],
+        )
+    print("回填完成")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="aisp", description="AIS 船舶航迹分析系统")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -222,6 +274,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rs.add_argument("--clean", action="store_true", help="一并恢复 CLEAN 明细")
     p_rs.add_argument("--overwrite", action="store_true", help="覆盖已存在的数据集版本")
     p_rs.set_defaults(func=cmd_restore)
+
+    p_bf = sub.add_parser("backfill-profile",
+                         help="回填历史批次的 profile_json（MMSI 数/编码/分隔符）")
+    p_bf.set_defaults(func=cmd_backfill_profile)
 
     args = ap.parse_args(argv)
     args.func(args)

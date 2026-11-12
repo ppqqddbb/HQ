@@ -194,6 +194,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 | `aisp serve [--host H] [--port P] [--reload]` | 启动 Web 服务 |
 | `aisp demo [--files N] [--epochs N] [--reimport]` | 端到端演示（导入+治理+全部算法） |
 | `aisp rebuild [--yes]` | 重建元数据库并重新扫描产物 |
+| `aisp backfill-profile` | 回填历史批次的 MMSI 数 / 编码 / 分隔符，可重复执行；需先停服务 |
 
 ---
 
