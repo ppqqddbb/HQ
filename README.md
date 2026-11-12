@@ -240,7 +240,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ---
 
-## 7. API 清单（40 个路径 / 42 个端点）
+## 7. API 清单（42 个业务路径 / 44 个端点）
 
 统一响应结构：成功 `{request_id, ok: true, data}`，失败 `{request_id, ok: false, error: {code, message}}`。
 
