@@ -52,7 +52,7 @@
                     │ tasks.py   队列 + 进度 + SSE + 审计          │
                     │ store.py   进程内共享 DuckDB + 元数据库      │
                     └──────────────────┬──────────────────────────┘
-                                       ▼  FastAPI (api.py, 40 个路径 / 42 个端点)
+                                       ▼  FastAPI (api.py, 42 个路径 / 44 个端点)
                     ┌─────────────────────────────────────────────┐
                     │ web/  11 个页面（原生 ESM + ECharts + Canvas）│
                     └─────────────────────────────────────────────┘
@@ -85,7 +85,7 @@ HQ/
 │   ├── backup.py             # DuckDB 导出式备份与恢复
 │   ├── modelmon.py           # 模型卡、PSI 漂移、回填误差监控
 │   ├── report.py             # 自包含 HTML / Markdown 报告生成
-│   ├── api.py                # FastAPI 应用（40 个路径 / 42 个端点）
+│   ├── api.py                # FastAPI 应用（42 个路径 / 44 个端点）
 │   ├── cli.py                # 命令行入口（import/clean/run/backup/restore）
 │   └── algorithms/           # 六类分析算法
 │       ├── common.py         # 统一过滤条件（矩形/多边形/圆形）与结果写盘
