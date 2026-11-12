@@ -20,7 +20,7 @@
 | 航迹预测与回测 | 匀速外推 / 卡尔曼滤波 / GRU 残差学习，时间外推切分，ADE / FDE / P90 / 截尾均值 + 分层评估 |
 | 模型卡与上线监控 | 模型卡（训练边界/特征/依赖/失效场景）、PSI 输入分布漂移、回填误差趋势、监控点台账与重训判定 |
 | 可视化前端 | 11 个页面，自研 Canvas 瓦片地图（支持离线）、轨迹回放与三种空间筛选（矩形/多边形/圆形）、ECharts 主题化图表 |
-| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、167 项自动化测试 |
+| 工程化 | 异步任务队列、SSE 进度、审计日志、统一响应包、报告导出（自包含 HTML/Markdown）、168 项自动化测试 |
 | 身份与权限 | RBAC 五角色（管理员/数据管理员/分析师/只读/审计），Bearer 或 `X-AIS-Token` 两种令牌传递方式，越权操作落审计 |
 | 备份与恢复 | DuckDB `EXPORT DATABASE` 导出式备份（zip），CLI 与系统管理页双入口，恢复后自动校验 |
 | 报告导出 | 每类分析生成离线可打开的 HTML 报告（内嵌 SVG 图表、无外部依赖）与 Markdown 版本，含参数、口径与可追溯信息 |
@@ -97,7 +97,7 @@ HQ/
 │   └── assets/
 │       ├── app.js  util.js  charts.js  state.js  taskrun.js  style.css
 │       └── pages/            # 11 个页面模块（含 models.js）
-├── tests/                    # pytest（167 项）
+├── tests/                    # pytest（168 项）
 │   ├── conftest.py           # 测试期隔离 artifacts 目录
 │   ├── test_geo.py           # 空间与网格
 │   ├── test_stats.py         # 统计与质量口径
@@ -390,7 +390,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 
 ```powershell
 & "D:\File\Anaconda\envs\py310\python.exe" -m pytest tests -q
-# 167 passed
+# 168 passed
 ```
 
 覆盖范围：
@@ -399,7 +399,7 @@ $PY = "D:\File\Anaconda\envs\py310\python.exe"
 |---|---|
 | `test_geo.py` | 球面距离、投影往返、网格左闭右开边界、外边界归并、DDA 四连通性、圆均值跨北 |
 | `test_stats.py` | BH 单调性与上界、强度分档对称性、航线连续匹配语义、质量权重和为 1、加权公式复算 |
-| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知资源 404、上传文件名净化与路径穿越防护、模型端点契约 |
+| `test_ingest_api.py` | 分隔符/时间格式探测、预检字段映射、API 响应包契约、未知算法/未知数据集的前置拒绝、未知资源 404、上传文件名净化与路径穿越防护、模型端点契约 |
 | `test_dataservice.py` | 矩形/多边形/圆形筛选的 SQL 下推与结果一致性 |
 | `test_auth.py` | 五角色权限映射、令牌解析（Bearer / `X-AIS-Token`）与默认本机管理员 |
 | `test_users.py` | 令牌只存摘要、停用/删除/重置即时失效、内置管理员保护、角色白名单、管理接口契约 |

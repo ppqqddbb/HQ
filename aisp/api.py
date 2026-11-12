@@ -408,6 +408,10 @@ def api_create_task(req: TaskRequest) -> Dict[str, Any]:
     dv = req.dataset_version or dataservice._latest_dataset()
     if not dv:
         raise HTTPException(400, "没有可用数据集，请先导入 CSV")
+    # 数据集名写错时，任务会进队列后才因为找不到 parquet 而失败，
+    # 错误信息（DuckDB IO Error）对用户没有指导意义，因此在这里前置拦截。
+    if not dataservice.dataset_exists(dv):
+        raise HTTPException(400, f"数据集 {dv} 不存在或尚未完成治理，请先在「文件与批次」导入并治理")
     tid = tasks.create_task(req.algorithm, dv, req.parameters, req.filters, req.created_by)
     tasks.submit(tid)
     return pack({"task_id": tid, "status": "queued", "queue": tasks.get_task(tid)["queue"]})

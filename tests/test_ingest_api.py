@@ -171,6 +171,24 @@ def test_create_task_rejects_unknown_algorithm(client):
     assert "未知算法" in body["error"]["message"]
 
 
+def test_create_task_rejects_unknown_dataset(client):
+    """数据集名写错时必须在创建阶段拒绝，而不是让任务进队列后报 DuckDB IO Error。
+
+    背景（真实缺陷）：早期只校验算法名，`dataset_version=no_such_ds` 的任务
+    会先创建成功、再由执行器以「文件不存在」失败，用户拿到的错误信息无法指导修正。
+    """
+    r = client.post("/api/v1/analysis/tasks", json={
+        "algorithm": "correlate",
+        "dataset_version": "no_such_ds",
+        "parameters": {},
+    })
+    assert r.status_code == 400
+    body = r.json()
+    assert body["ok"] is False
+    assert "no_such_ds" in body["error"]["message"]
+    assert "不存在" in body["error"]["message"]
+
+
 def test_algorithms_list_is_registered(client):
     """清单里的每个算法都必须能真正执行，避免文档与注册表脱节。"""
     from aisp import tasks
