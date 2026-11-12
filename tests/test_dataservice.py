@@ -73,6 +73,19 @@ def test_trajectories_respect_bbox_filter(small_dataset):
     assert outside["count"] == 0
 
 
+def test_trajectories_keep_endpoints_after_sql_prefilter(small_dataset):
+    """SQL 端等距预抽样必须保留首尾点，并让每条线的坐标数受控。
+
+    地图轨迹接口以前会把百万级点位全量拉进 pandas 再抽稀，导致首屏数秒卡顿；
+    改成 SQL 预抽样后要保证折线形态不丢首尾。
+    """
+    out = dataservice.trajectories(small_dataset, {}, prefilter_points=100)
+    coords = out["features"][0]["geometry"]["coordinates"]
+    assert coords[0] == [10.0, 55.0]
+    assert coords[-1] == pytest.approx([10.599, 55.2995])
+    assert len(coords) <= 100
+
+
 def test_points_map_aggregates_inside_bbox(small_dataset):
     out = dataservice.points_map(small_dataset, [9.9, 54.9, 10.7, 55.4], zoom=8)
     assert out["points"], "框选区域内应返回聚合格"

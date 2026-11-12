@@ -157,8 +157,14 @@ def trajectories(
     limit: int = 150,
     simplify_m: float = 15.0,
     max_points_per_traj: int = 400,
+    prefilter_points: int = 3200,
 ) -> Dict[str, Any]:
-    """返回地图用的轨迹线（已简化），按点数排序取前 N 条。"""
+    """返回地图用的轨迹线（已简化），按点数排序取前 N 条。
+
+    先按点数选出最长的 N 条轨迹，再由 DuckDB 用 ``row_number()`` 在每条
+    轨迹内部做等距抽样（始终保留首尾点），最后才进入 Python 做 RDP 简化。
+    这样既不会把数百万个点全量搬进 pandas，也不会改变折线的整体形态。
+    """
     flt = Filter(filters)
     con = open_dataset(dataset_version)
     try:
@@ -175,8 +181,21 @@ def trajectories(
             return {"type": "FeatureCollection", "features": [], "count": 0}
         ids = ",".join("'" + str(t).replace("'", "''") + "'" for t in seg["traj_id"])
         pts = con.execute(
-            f"""SELECT traj_id, lon, lat, sog, event_time FROM clean_points
-                WHERE traj_id IN ({ids}) ORDER BY traj_id, event_time"""
+            f"""WITH picked AS (
+                    SELECT traj_id, count(*) AS cnt FROM clean_points
+                    WHERE traj_id IN ({ids}) GROUP BY 1
+                ),
+                ordered AS (
+                    SELECT c.traj_id, c.lon, c.lat, c.sog, c.event_time, p.cnt,
+                           row_number() OVER (
+                               PARTITION BY c.traj_id ORDER BY c.event_time, c.lon, c.lat
+                           ) AS rn
+                    FROM clean_points c JOIN picked p USING (traj_id)
+                )
+                SELECT traj_id, lon, lat, sog, event_time FROM ordered
+                WHERE rn = 1 OR rn = cnt
+                   OR rn % greatest(1, CAST(ceil(cnt / {float(prefilter_points)}) AS INTEGER)) = 0
+                ORDER BY traj_id, event_time"""
         ).fetchdf()
     finally:
         con.close()
