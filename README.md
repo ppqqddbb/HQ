@@ -113,6 +113,7 @@ HQ/
 ├── data/                     # 原始 CSV（不入库）
 ├── artifacts/                # 清洗结果、结果产物、元数据库（不入库）
 ├── requirements.txt
+├── pytest.ini                # 只收集 tests/test_*.py（防临时脚本被当作测试）
 └── .env.example
 ```
 
